@@ -92,6 +92,7 @@ python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.p
 **Available Options:**
 - **Scripts**: `train.py`, `eval.py`, `predict.py`
 - **Methods**: `linear`, `multilayer`, `svf`, `lora`.
+-   - `multilayer` uses a SegDINO-aligned DPT decoder and evenly-spaced layer sampling (e.g., [2,5,8,11] for depth=12) across both DINOv2 and DINOv3.
 - **Backbones**: `DINO` with `dino_version` in `{2, 3}` and size controls:
   - DINOv2: `dinov2_size ∈ {small, base, large}`
   - DINOv3: `dinov3_size ∈ {small, base, large}`, optional `dinov3_weights_path`

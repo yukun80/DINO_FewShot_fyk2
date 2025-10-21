@@ -11,9 +11,9 @@ Purpose:
 
 --- Example Usage ---
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=20
+python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth' nb_shots=10
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth' nb_shots=20
+python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov3_multilayer/best_model.pth' nb_shots=20
 
 - The `model_path` is required.
 - Other parameters (`method`, `dataset`, `input_size`, etc.) should match the
@@ -65,6 +65,7 @@ def cfg():
     dinov2_size = config.get("dinov2_size", "base")
     dinov3_size = config.get("dinov3_size", "base")
     dinov3_weights_path = config.get("dinov3_weights_path", None)
+    dinov3_rope_dtype = config.get("dinov3_rope_dtype", "bf16")
 
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
@@ -78,6 +79,7 @@ def cfg():
         "dinov2_size": dinov2_size,
         "dinov3_size": dinov3_size,
         "dinov3_weights_path": dinov3_weights_path,
+        "dinov3_rope_dtype": dinov3_rope_dtype,
     })
 
 
@@ -202,6 +204,7 @@ def main(_run, config: Dict[str, Any]):
                 "dinov2_size",
                 "dinov3_size",
                 "dinov3_weights_path",
+                "dinov3_rope_dtype",
                 "input_size",
                 "num_classes",
                 "dataset",
@@ -239,6 +242,7 @@ def main(_run, config: Dict[str, Any]):
             dinov2_size=effective_config.get("dinov2_size", "base"),
             dinov3_size=effective_config.get("dinov3_size", "base"),
             dinov3_weights_path=effective_config.get("dinov3_weights_path", None),
+            dinov3_rope_dtype=effective_config.get("dinov3_rope_dtype", "bf16"),
         )
     else:
         raise NotImplementedError(f"Model '{effective_config['model_name']}' is not supported.")

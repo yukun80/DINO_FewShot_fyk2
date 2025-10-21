@@ -2,19 +2,6 @@
 This script is the main entry point for training a Few-Shot Semantic Segmentation model.
 It has been refactored to use Sacred for robust experiment tracking and management.
 
---- Sacred Integration Details ---
-
-Purpose:
-    - To provide a systematic, reproducible, and organized way to run training experiments.
-    - Each run is saved in a unique, timestamped directory under `experiments/FSS_Training`.
-    - Manages configurations, logs metrics, and stores model artifacts automatically.
-
-Key Changes:
-    - Replaced `ArgumentParser` with Sacred's configuration system.
-    - Consolidated training logic into a main function decorated with `@ex.automain`.
-    - The concept of multiple runs (e.g., `train_3runs`) is now handled by executing
-      the script multiple times with different `run_id`s, ensuring each is tracked separately.
-
 --- Example Usage ---
 
 1.  **Generate Data Splits (if not already done):**
@@ -26,10 +13,10 @@ Key Changes:
     - **Linear Probing (10-shot, LR=0.01, Run 1):**
       python3 train.py with method=linear nb_shots=10 dino_version=2 dinov2_size=base run_id=1
       python3 train.py with method=linear nb_shots=10 dino_version=3 dinov3_size=base run_id=1
-      
+
     - **multilayer**
-      python3 train.py with method=multilayer nb_shots=20 run_id=1
-      python3 train.py with method=multilayer nb_shots=20 dino_version=3 dinov3_size=base run_id=1
+      python3 train.py with method=multilayer nb_shots=1 dino_version=2 dinov2_size=base run_id=1
+      python3 train.py with method=multilayer nb_shots=20 dino_version=3 dinov3_size=base run_id=3
 
     - **SVF (10-shot, LR=0.0001, Run 1, requires a pre-trained linear decoder):**
       python3 train.py with method=svf nb_shots=10 lr=0.0001 run_id=1
@@ -59,12 +46,13 @@ from utils.train_utils import get_lr_function, get_loss_fun, get_optimizer, get_
 from utils.precise_bn import compute_precise_bn_stats
 from models.backbones.dino import DINO_linear
 import warnings
+
 warnings.filterwarnings("ignore")
 
 # --- Sacred Experiment Setup ---
 ex = Experiment("FSS_Training")
 # All experiment artifacts will be stored in 'experiments/FSS_Training/{run_id}'
-ex.observers.append(FileStorageObserver('experiments/FSS_Training'))
+ex.observers.append(FileStorageObserver("experiments/FSS_Training"))
 
 
 @ex.config
@@ -92,23 +80,27 @@ def cfg():
     dinov3_weights_path = config.get("dinov3_weights_path", None)
 
     # Merge CLI-accessible parameters into the main config dictionary
-    config.update({
-        "model_name": model_name,
-        "method": method,
-        "dataset": dataset,
-        "number_of_shots": nb_shots,
-        "lr": lr,
-        "input_size": input_size,
-        "run": run_id,
-        "RNG_seed": run_id - 1  # Seed depends on the run_id for reproducibility
-    })
+    config.update(
+        {
+            "model_name": model_name,
+            "method": method,
+            "dataset": dataset,
+            "number_of_shots": nb_shots,
+            "lr": lr,
+            "input_size": input_size,
+            "run": run_id,
+            "RNG_seed": run_id - 1,  # Seed depends on the run_id for reproducibility
+        }
+    )
     # Also surface backbone selection into the unified config dict
-    config.update({
-        "dino_version": dino_version,
-        "dinov2_size": dinov2_size,
-        "dinov3_size": dinov3_size,
-        "dinov3_weights_path": dinov3_weights_path,
-    })
+    config.update(
+        {
+            "dino_version": dino_version,
+            "dinov2_size": dinov2_size,
+            "dinov3_size": dinov3_size,
+            "dinov3_weights_path": dinov3_weights_path,
+        }
+    )
 
 
 def print_trainable_parameters(model):
@@ -128,6 +120,7 @@ class ConfusionMatrix:
     """
     A robust confusion matrix for evaluating semantic segmentation.
     """
+
     def __init__(self, num_classes, exclude_classes):
         self.num_classes = num_classes
         self.mat = torch.zeros((num_classes, num_classes), dtype=torch.int64)
@@ -154,10 +147,7 @@ class ConfusionMatrix:
         mIOU = sum(iu) / len(iu)
         reduced_iu = [iu[i] for i in range(self.num_classes) if i not in self.exclude_classes]
         mIOU_reduced = sum(reduced_iu) / len(reduced_iu)
-        return (
-            f"mIoU: {mIOU:.2f} | mIoU (reduced): {mIOU_reduced:.2f} | "
-            f"Global Accuracy: {acc_global:.2f}"
-        )
+        return f"mIoU: {mIOU:.2f} | mIoU (reduced): {mIOU_reduced:.2f} | " f"Global Accuracy: {acc_global:.2f}"
 
 
 def evaluate(model, data_loader, device, confmat, mixed_precision, max_eval):
@@ -168,14 +158,18 @@ def evaluate(model, data_loader, device, confmat, mixed_precision, max_eval):
             image, target = image.to(device), target.to(device)
             with amp.autocast(enabled=mixed_precision):
                 output = model(image)
-            output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
+            output = torch.nn.functional.interpolate(
+                output, size=target.shape[-2:], mode="bilinear", align_corners=False
+            )
             confmat.update(output.argmax(1).flatten(), target.flatten())
             if i + 1 == max_eval:
                 break
     return confmat
 
 
-def train_one_epoch(model, loss_fun, optimizer, loader, lr_scheduler, mixed_precision, scaler, _run, epoch):
+def train_one_epoch(
+    model, loss_fun, optimizer, loader, lr_scheduler, mixed_precision, scaler, _run, epoch, clip_grad_norm=None
+):
     """Trains the model for one epoch."""
     model.train()
     total_loss = 0
@@ -183,15 +177,22 @@ def train_one_epoch(model, loss_fun, optimizer, loader, lr_scheduler, mixed_prec
         image, target = image.to("cuda"), target.to("cuda")
         with amp.autocast(enabled=mixed_precision):
             output = model(image)
-            output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
+            output = torch.nn.functional.interpolate(
+                output, size=target.shape[-2:], mode="bilinear", align_corners=False
+            )
             loss = loss_fun(output, target.long())
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
+        # Optional gradient clipping for stability
+        if clip_grad_norm is not None:
+            if hasattr(scaler, "is_enabled") and scaler.is_enabled():
+                scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
         scaler.step(optimizer)
         scaler.update()
         lr_scheduler.step()
-        
+
         total_loss += loss.item()
         _run.log_scalar("metrics.batch_loss", loss.item(), step=epoch * len(loader) + t)
 
@@ -228,11 +229,11 @@ def main(_run, config):
     The main entry point for a training run, managed by Sacred.
     """
     setup_env(config)
-    
+
     # --- Configuration & Setup ---
     save_dir = _run.observers[0].dir
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     print(f"Starting Run {_run._id}: {config['method']} on {config['dataset']} ({config['number_of_shots']}-shot)")
     print(f"Artifacts will be saved to: {save_dir}")
 
@@ -248,6 +249,7 @@ def main(_run, config):
             dinov2_size=config.get("dinov2_size", "base"),
             dinov3_size=config.get("dinov3_size", "base"),
             dinov3_weights_path=config.get("dinov3_weights_path", None),
+            dinov3_rope_dtype=config.get("dinov3_rope_dtype", "bf16"),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")
@@ -256,16 +258,22 @@ def main(_run, config):
 
     # --- Load Pre-trained Decoder if Applicable ---
     if config["method"] in ["svf", "lora"]:
-        linear_weights_path = config.get("linear_weights_path") or \
-            f"./exp/models_disaster/{config['model_name']}_linear_{config['dataset']}_{config['number_of_shots']}shot_run{config['run']}_best.pth"
-        
+        linear_weights_path = (
+            config.get("linear_weights_path")
+            or f"./exp/models_disaster/{config['model_name']}_linear_{config['dataset']}_{config['number_of_shots']}shot_run{config['run']}_best.pth"
+        )
+
         print(f"Attempting to load pre-trained decoder from: {linear_weights_path}")
         if not os.path.exists(linear_weights_path):
-            raise FileNotFoundError(f"Pre-trained decoder not found at {linear_weights_path}. Please run the 'linear' method first.")
-        
-        state_dict = torch.load(linear_weights_path, map_location='cpu')
-        model.decoder.load_state_dict({k.replace('decoder.', ''): v for k, v in state_dict.items() if k.startswith('decoder.')})
-        model.bn.load_state_dict({k.replace('bn.', ''): v for k, v in state_dict.items() if k.startswith('bn.')})
+            raise FileNotFoundError(
+                f"Pre-trained decoder not found at {linear_weights_path}. Please run the 'linear' method first."
+            )
+
+        state_dict = torch.load(linear_weights_path, map_location="cpu")
+        model.decoder.load_state_dict(
+            {k.replace("decoder.", ""): v for k, v in state_dict.items() if k.startswith("decoder.")}
+        )
+        model.bn.load_state_dict({k.replace("bn.", ""): v for k, v in state_dict.items() if k.startswith("bn.")})
         print("Successfully loaded pre-trained decoder and batch norm layers.")
 
     model.to(device)
@@ -276,7 +284,9 @@ def main(_run, config):
     scaler = amp.GradScaler(enabled=config["mixed_precision"])
     loss_fun = get_loss_fun(config)
     total_iterations = len(train_loader) * config["epochs"]
-    lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=total_iterations, power=config["poly_power"])
+    lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(
+        optimizer, total_iters=total_iterations, power=config["poly_power"]
+    )
 
     # --- Training & Evaluation Loop ---
     start_time = time.time()
@@ -284,10 +294,21 @@ def main(_run, config):
     eval_on_epochs = get_epochs_to_eval(config)
 
     for epoch in range(config["epochs"]):
-        if hasattr(train_set, 'build_epoch'):
+        if hasattr(train_set, "build_epoch"):
             train_set.build_epoch()
-        
-        avg_loss = train_one_epoch(model, loss_fun, optimizer, train_loader, lr_scheduler, config["mixed_precision"], scaler, _run, epoch)
+
+        avg_loss = train_one_epoch(
+            model,
+            loss_fun,
+            optimizer,
+            train_loader,
+            lr_scheduler,
+            config["mixed_precision"],
+            scaler,
+            _run,
+            epoch,
+            clip_grad_norm=config.get("clip_grad_norm", None),
+        )
         _run.log_scalar("metrics.avg_epoch_loss", avg_loss, step=epoch)
 
         if epoch in eval_on_epochs:
@@ -297,13 +318,13 @@ def main(_run, config):
 
             confmat = ConfusionMatrix(config["num_classes"], config["exclude_classes"])
             evaluate(model, val_loader, device, confmat, config["mixed_precision"], config["max_eval"])
-            
+
             print(f"--- Evaluation at Epoch {epoch} ---")
             print(confmat)
-            
+
             acc_global, _, iu = confmat.compute()
             mIOU = sum(iu) / len(iu)
-            
+
             _run.log_scalar("eval.mIoU", mIOU, step=epoch)
             _run.log_scalar("eval.global_accuracy", acc_global, step=epoch)
 

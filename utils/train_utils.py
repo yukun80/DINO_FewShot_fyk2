@@ -41,22 +41,49 @@ def get_loss_fun(config):
         raise NotImplementedError()
     return loss_fun
 
-def get_optimizer(model,config):
-    if not config["bn_weight_decay"]:
+def _as_float(value, name: str) -> float:
+    try:
+        return float(value)
+    except Exception:
+        raise ValueError(f"Config '{name}' must be a number, got {type(value)}: {value}")
+
+
+def _as_bool(value, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    raise ValueError(f"Config '{name}' must be a bool or str, got {type(value)}: {value}")
+
+
+def get_optimizer(model, config):
+    # Robustly parse numeric and boolean configs (handles YAML strings)
+    lr = _as_float(config["lr"], "lr")
+    momentum = _as_float(config["momentum"], "momentum")
+    weight_decay = _as_float(config["weight_decay"], "weight_decay")
+    bn_wd_flag = _as_bool(config["bn_weight_decay"], "bn_weight_decay")
+
+    if not bn_wd_flag:
         p_bn = [p for n, p in model.named_parameters() if "bn" in n]
         p_non_bn = [p for n, p in model.named_parameters() if "bn" not in n]
         optim_params = [
-            {"params": p_bn, "weight_decay": 0},
-            {"params": p_non_bn, "weight_decay": config["weight_decay"]},
+            {"params": p_bn, "weight_decay": 0.0},
+            {"params": p_non_bn, "weight_decay": weight_decay},
         ]
+        # Per-parameter-group weight_decay is set; the global value is not used.
+        return torch.optim.SGD(
+            optim_params,
+            lr=lr,
+            momentum=momentum,
+            weight_decay=0.0,
+        )
     else:
-        optim_params = model.parameters()
-    return torch.optim.SGD(
-        optim_params,
-        lr=config["lr"],
-        momentum=config["momentum"],
-        weight_decay=config["weight_decay"]
-    )
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
 
 def get_dataset_loaders(config):
     name=config["dataset_name"]
@@ -99,4 +126,3 @@ def get_dataset_loaders(config):
     print("train size:", len(train_loader))
     print("val size:", len(val_loader))
     return train_loader, val_loader,train_set
-

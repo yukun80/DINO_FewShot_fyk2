@@ -10,7 +10,7 @@ from glob import glob
 * 当 --query 参数被设置为 -1 时，脚本将自动把所有未被选为支持集的样本全部用作查询集。
 
 --run:
-python -m datasets.generate_disaster_splits --path ../_datasets/Exp_Disaster_Few-Shot --shots 20 --query 257
+python -m datasets.generate_disaster_splits --path ../_datasets/Exp_Disaster_Few-Shot --shots 1 --query 267
 """
 
 def generate_splits(dataset_path, shots, num_query):

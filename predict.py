@@ -65,6 +65,7 @@ def cfg():
     dinov2_size = config.get("dinov2_size", "base")
     dinov3_size = config.get("dinov3_size", "base")
     dinov3_weights_path = config.get("dinov3_weights_path", None)
+    dinov3_rope_dtype = config.get("dinov3_rope_dtype", "bf16")
 
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
@@ -78,6 +79,7 @@ def cfg():
         "dinov2_size": dinov2_size,
         "dinov3_size": dinov3_size,
         "dinov3_weights_path": dinov3_weights_path,
+        "dinov3_rope_dtype": dinov3_rope_dtype,
     })
 
 
@@ -168,6 +170,7 @@ def main(_run, config: Dict[str, Any]):
             dinov2_size=config.get("dinov2_size", "base"),
             dinov3_size=config.get("dinov3_size", "base"),
             dinov3_weights_path=config.get("dinov3_weights_path", None),
+            dinov3_rope_dtype=config.get("dinov3_rope_dtype", "bf16"),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")

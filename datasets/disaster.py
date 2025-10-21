@@ -72,6 +72,17 @@ class DisasterDataset(Dataset):
             image_tensor = torch.from_numpy(image)
             label_tensor = torch.from_numpy(label)
 
+            # --- Normalize inputs to match ImageNet-pretrained backbones ---
+            # If dynamic range appears to be 0-255, scale to [0,1]
+            if image_tensor.max().item() > 1.5:
+                image_tensor = image_tensor / 255.0
+            # Clamp to [0,1] for robustness
+            image_tensor = image_tensor.clamp(0.0, 1.0)
+            # Standardize using ImageNet mean/std
+            mean = torch.tensor([0.485, 0.456, 0.406], dtype=image_tensor.dtype).view(3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225], dtype=image_tensor.dtype).view(3, 1, 1)
+            image_tensor = (image_tensor - mean) / std
+
             # Note: The original project's transforms in `utils/transforms.py` are PIL-based.
             # They are not compatible with the tensors produced here.
             # If augmentations are needed, new tensor-based transforms should be implemented.
@@ -88,4 +99,3 @@ class DisasterDataset(Dataset):
             print(f"Error: {e}")
             # Return empty tensors or handle appropriately
             return torch.zeros((3, 512, 512)), torch.zeros((512, 512), dtype=torch.long), ""
-

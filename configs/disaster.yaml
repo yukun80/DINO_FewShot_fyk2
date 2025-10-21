@@ -5,12 +5,16 @@ dino_version: 2
 dinov2_size: base # Supported sizes: small, base, large
 dinov3_size: base # Supported sizes: small, base, large (used when dino_version=3)
 dinov3_weights_path:  # Optional explicit path to a DINOv3 weight file
+dinov3_rope_dtype: bf16  # RoPE dtype for DINOv3: one of {bf16, fp32, fp16}
 
 #OPTIM:
-epochs: 300
+# - DINOv2：lr≈5e-4, weight_decay≈1e-4, momentum=0.9
+# - DINOv3：lr≈1e-3, weight_decay≈1e-4, momentum=0.9
+epochs: 200
 lr: 0.001
 momentum: 0.9
 weight_decay: 0.0001
+clip_grad_norm: 1.0
 bn_weight_decay: False
 bn_precise_stats: False
 bn_precise_num_samples: 600
