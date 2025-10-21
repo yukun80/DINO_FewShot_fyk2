@@ -171,6 +171,13 @@ def main(_run, config: Dict[str, Any]):
             dinov3_size=config.get("dinov3_size", "base"),
             dinov3_weights_path=config.get("dinov3_weights_path", None),
             dinov3_rope_dtype=config.get("dinov3_rope_dtype", "bf16"),
+            # FDM flags
+            fdm_enable_apm=(config.get("fdm", {}).get("enable_apm", False)
+                            if isinstance(config.get("fdm", {}), dict) else config.get("fdm_enable_apm", False)),
+            fdm_apm_mode=(config.get("fdm", {}).get("apm_mode", "S")
+                          if isinstance(config.get("fdm", {}), dict) else config.get("fdm_apm_mode", "S")),
+            fdm_enable_acpa=(config.get("fdm", {}).get("enable_acpa", False)
+                             if isinstance(config.get("fdm", {}), dict) else config.get("fdm_enable_acpa", False)),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")

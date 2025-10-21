@@ -26,6 +26,21 @@
   - `python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=10`
 - Supported `method` values: `linear`, `multilayer`, `svf`, `lora` (VPT removed).
 
+## Frequency Decoupling Modules (FDM)
+- Purpose: Optional target-domain finetuning adapters that operate in frequency/phase space to reduce inter-channel correlation and improve cross-domain robustness.
+- Modules: APM (Amplitude-Phase Masker) and ACPA (Adaptive Channel Phase Attention).
+- Enable in `configs/disaster.yaml` under `fdm`:
+  - `enable_apm: {true|false}`
+  - `apm_mode: {"S"|"M"}` — "S" uses `[1,1,H,W]` masks; "M" uses `[1,C,H,W]` masks.
+  - `enable_acpa: {true|false}`
+- Fixed integration policy (no extra knobs):
+  - `linear` and `svf`: apply APM → ACPA on the final feature map, then BN + 1×1.
+  - `multilayer`: apply APM → ACPA on only the deeper two of the four intermediate features; pass all four into DPT.
+- Implementation notes:
+  - Batch‑agnostic APM parameters: masks are initialized lazily to `[1,1,H,W]` or `[1,C,H,W]` at first use.
+  - Shapes are preserved; decoders (linear/DPT) require no changes.
+  - Code points: see `models/backbones/dino.py` around the decoder paths.
+
 Notes on methods
 - `multilayer`: Uses a SegDINO-aligned DPT decoder with spread layer sampling.
   - Layer selection: 4 evenly spaced intermediate layers (e.g., depth=12 → [2,5,8,11]).
@@ -54,7 +69,7 @@ Training Stability Tips
   - DINOv2: `lr≈5e-4`, `weight_decay≈1e-4`, `momentum=0.9`.
   - DINOv3: `lr≈1e-3`, `weight_decay≈1e-4`, `momentum=0.9`.
 - Optional gradient clipping: set `clip_grad_norm` (e.g., `clip_grad_norm: 1.0`).
-- Mixed precision toggled via `mixed_precision` (default False). AMP is used only in training when enabled.
+- Mixed precision is disabled; training runs in FP32 to accommodate FFT/phase ops (`mixed_precision: False`).
 - Optimizer config values are parsed robustly, but prefer numeric (non-quoted) values for `lr`, `momentum`, `weight_decay`.
 
 ## Coding Style & Naming Conventions

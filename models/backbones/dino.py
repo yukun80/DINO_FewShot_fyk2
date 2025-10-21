@@ -10,6 +10,8 @@ import glob
 from peft import LoraConfig, get_peft_model
 from models.svf import *
 from models.decoders.dpt import DPTDecoder
+from modules.module_FDM.freq_masker import MaskModule
+from modules.module_FDM.phase_attn import PhaseAttention
 
 def create_backbone_dinov2(method, model_repo_path, model_path, dinov2_size="base") : 
     sys.path.insert(0,os.path.join(model_repo_path, "dinov2"))
@@ -226,11 +228,21 @@ class DINO_linear(nn.Module):
                  dinov2_size: str = "base",
                  dinov3_size: str = "base",
                  dinov3_weights_path: Optional[str] = None,
-                 dinov3_rope_dtype: str = "bf16"):
+                 dinov3_rope_dtype: str = "bf16",
+                 # FDM integration flags (single policy)
+                 fdm_enable_apm: bool = False,
+                 fdm_apm_mode: str = "S",
+                 fdm_enable_acpa: bool = False):
         super().__init__()
         self.method = method
         self.version = version
         self.input_size = input_size
+        # FDM flags
+        self.fdm_enable_apm = bool(fdm_enable_apm)
+        self.fdm_apm_mode = str(fdm_apm_mode or "S").upper()
+        if self.fdm_apm_mode not in ("S", "M"):
+            self.fdm_apm_mode = "S"
+        self.fdm_enable_acpa = bool(fdm_enable_acpa)
         if self.version == 3:
             self.encoder = create_backbone_dinov3(method, model_repo_path, model_path, dinov3_size, dinov3_weights_path, dinov3_rope_dtype)
             if dinov3_size == 'base':
@@ -266,6 +278,10 @@ class DINO_linear(nn.Module):
             )
             self.encoder = get_peft_model(self.encoder, config)
         
+        # Optional FDM modules (initialized lazily for spatial dims)
+        self.apm = MaskModule(shape=None) if self.fdm_enable_apm else None
+        self.acpa = PhaseAttention(self.in_channels) if self.fdm_enable_acpa else None
+
         # Decoder selection
         if method == "multilayer":
             # Configure per-layer out_channels aligned with module_segdino
@@ -296,6 +312,25 @@ class DINO_linear(nn.Module):
             self.decoder = nn.Conv2d(self.in_channels, num_classes, kernel_size=1)
             self.bn = nn.SyncBatchNorm(self.in_channels)
 
+    def _ensure_apm_shape(self, feat: torch.Tensor) -> None:
+        """Ensure APM parameters are initialized with batch-agnostic shape.
+        S-mode: [1,1,H,W]; M-mode: [1,C,H,W].
+        """
+        if self.apm is None:
+            return
+        if not isinstance(feat, torch.Tensor):
+            return
+        _, c, h, w = feat.shape
+        if self.fdm_apm_mode == "S":
+            target = (1, 1, h, w)
+        else:  # "M"
+            target = (1, c, h, w)
+        # Set target_shape so that MaskModule initializes without binding batch size
+        if getattr(self.apm, "target_shape", None) != target:
+            self.apm.target_shape = target
+        # Trigger (re)initialization if needed
+        self.apm._ensure_initialized(feat)
+
     def forward(self, x): 
         if self.version == 3:
             input_dim = int(self.input_size/16)*16
@@ -313,9 +348,26 @@ class DINO_linear(nn.Module):
             x = self.encoder(x)
         
         if self.method == "multilayer":
-            feats = x if isinstance(x, (list, tuple)) else [x]
+            feats = list(x) if isinstance(x, (list, tuple)) else [x]
+            # Apply FDM on selected layers if enabled
+            if (self.apm is not None) or (self.acpa is not None):
+                n = len(feats)
+                # Single policy: apply only on the deeper two features (last two indices)
+                apply_ids = list(range(max(0, n - 2), n))
+                for i in apply_ids:
+                    if self.apm is not None:
+                        self._ensure_apm_shape(feats[i])
+                        feats[i] = self.apm(feats[i])
+                    if self.acpa is not None:
+                        feats[i] = self.acpa(feats[i])
             return self.decoder(feats)
         else:
             x = torch.cat(x, dim=1)
+            # Apply FDM for linear/svf path prior to BN/Conv
+            if self.apm is not None:
+                self._ensure_apm_shape(x)
+                x = self.apm(x)
+            if self.acpa is not None:
+                x = self.acpa(x)
             x = self.bn(x)
             return self.decoder(x)

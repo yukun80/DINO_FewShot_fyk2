@@ -15,7 +15,7 @@ It has been refactored to use Sacred for robust experiment tracking and manageme
       python3 train.py with method=linear nb_shots=10 dino_version=3 dinov3_size=base run_id=1
 
     - **multilayer**
-      python3 train.py with method=multilayer nb_shots=1 dino_version=2 dinov2_size=base run_id=1
+      python3 train.py with method=multilayer nb_shots=20 dino_version=2 dinov2_size=base run_id=1
       python3 train.py with method=multilayer nb_shots=20 dino_version=3 dinov3_size=base run_id=3
 
     - **SVF (10-shot, LR=0.0001, Run 1, requires a pre-trained linear decoder):**
@@ -34,7 +34,6 @@ import datetime
 import time
 import torch
 import yaml
-import torch.cuda.amp as amp
 import os
 import random
 import numpy as np
@@ -150,14 +149,13 @@ class ConfusionMatrix:
         return f"mIoU: {mIOU:.2f} | mIoU (reduced): {mIOU_reduced:.2f} | " f"Global Accuracy: {acc_global:.2f}"
 
 
-def evaluate(model, data_loader, device, confmat, mixed_precision, max_eval):
+def evaluate(model, data_loader, device, confmat, max_eval):
     """Evaluates the model on the validation set."""
     model.eval()
     with torch.no_grad():
         for i, (image, target, _) in enumerate(data_loader):
             image, target = image.to(device), target.to(device)
-            with amp.autocast(enabled=mixed_precision):
-                output = model(image)
+            output = model(image)
             output = torch.nn.functional.interpolate(
                 output, size=target.shape[-2:], mode="bilinear", align_corners=False
             )
@@ -168,29 +166,25 @@ def evaluate(model, data_loader, device, confmat, mixed_precision, max_eval):
 
 
 def train_one_epoch(
-    model, loss_fun, optimizer, loader, lr_scheduler, mixed_precision, scaler, _run, epoch, clip_grad_norm=None
+    model, loss_fun, optimizer, loader, lr_scheduler, _run, epoch, clip_grad_norm=None
 ):
     """Trains the model for one epoch."""
     model.train()
     total_loss = 0
     for t, (image, target, _) in enumerate(loader):
         image, target = image.to("cuda"), target.to("cuda")
-        with amp.autocast(enabled=mixed_precision):
-            output = model(image)
-            output = torch.nn.functional.interpolate(
-                output, size=target.shape[-2:], mode="bilinear", align_corners=False
-            )
-            loss = loss_fun(output, target.long())
+        output = model(image)
+        output = torch.nn.functional.interpolate(
+            output, size=target.shape[-2:], mode="bilinear", align_corners=False
+        )
+        loss = loss_fun(output, target.long())
 
         optimizer.zero_grad()
-        scaler.scale(loss).backward()
+        loss.backward()
         # Optional gradient clipping for stability
         if clip_grad_norm is not None:
-            if hasattr(scaler, "is_enabled") and scaler.is_enabled():
-                scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
-        scaler.step(optimizer)
-        scaler.update()
+        optimizer.step()
         lr_scheduler.step()
 
         total_loss += loss.item()
@@ -250,6 +244,10 @@ def main(_run, config):
             dinov3_size=config.get("dinov3_size", "base"),
             dinov3_weights_path=config.get("dinov3_weights_path", None),
             dinov3_rope_dtype=config.get("dinov3_rope_dtype", "bf16"),
+            # FDM flags
+            fdm_enable_apm=config.get("fdm", {}).get("enable_apm", False) if isinstance(config.get("fdm", {}), dict) else config.get("fdm_enable_apm", False),
+            fdm_apm_mode=config.get("fdm", {}).get("apm_mode", "S") if isinstance(config.get("fdm", {}), dict) else config.get("fdm_apm_mode", "S"),
+            fdm_enable_acpa=config.get("fdm", {}).get("enable_acpa", False) if isinstance(config.get("fdm", {}), dict) else config.get("fdm_enable_acpa", False),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")
@@ -281,7 +279,6 @@ def main(_run, config):
     # --- Data, Optimizer, and Scheduler ---
     train_loader, val_loader, train_set = get_dataset_loaders(config)
     optimizer = get_optimizer(model, config)
-    scaler = amp.GradScaler(enabled=config["mixed_precision"])
     loss_fun = get_loss_fun(config)
     total_iterations = len(train_loader) * config["epochs"]
     lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(
@@ -303,8 +300,6 @@ def main(_run, config):
             optimizer,
             train_loader,
             lr_scheduler,
-            config["mixed_precision"],
-            scaler,
             _run,
             epoch,
             clip_grad_norm=config.get("clip_grad_norm", None),
@@ -317,7 +312,7 @@ def main(_run, config):
                 compute_precise_bn_stats(model, train_loader, config["bn_precise_num_samples"])
 
             confmat = ConfusionMatrix(config["num_classes"], config["exclude_classes"])
-            evaluate(model, val_loader, device, confmat, config["mixed_precision"], config["max_eval"])
+            evaluate(model, val_loader, device, confmat, config["max_eval"])
 
             print(f"--- Evaluation at Epoch {epoch} ---")
             print(confmat)

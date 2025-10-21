@@ -98,6 +98,21 @@ python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.p
   - DINOv3: `dinov3_size ∈ {small, base, large}`, optional `dinov3_weights_path`
 - **Datasets**: The framework is currently optimized for the `disaster` dataset.
 
+### Frequency Decoupling Modules (FDM)
+The framework optionally integrates a lightweight frequency masker (APM) and a channel phase attention (ACPA) between the backbone and decoders. Configure in `configs/disaster.yaml`:
+
+```
+fdm:
+  enable_apm: false       # APM on/off
+  apm_mode: "S"           # "S": [1,1,H,W], "M": [1,C,H,W]
+  enable_acpa: false      # ACPA on/off
+```
+
+Notes:
+- Works for `linear`, `multilayer`, and `svf`; preserves tensor shapes.
+- Policy (fixed): linear/svf apply on the final feature; multilayer applies on the deeper two of four features before DPT.
+- Mixed precision (AMP) is disabled in training to accommodate FFT-based ops (set `mixed_precision: False`).
+
 
 ## Acknowledgement
 

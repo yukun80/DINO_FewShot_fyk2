@@ -9,4 +9,6 @@ ARTICLE.md
 ./exp/
 experiments/
 pretrain/
-modules/
+# modules/
+modules/module_segdino/
+modules/module2/

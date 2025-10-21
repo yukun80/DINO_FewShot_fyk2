@@ -13,7 +13,7 @@ Purpose:
 
 python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth' nb_shots=10
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov3_multilayer/best_model.pth' nb_shots=20
+python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=20
 
 - The `model_path` is required.
 - Other parameters (`method`, `dataset`, `input_size`, etc.) should match the
@@ -243,6 +243,13 @@ def main(_run, config: Dict[str, Any]):
             dinov3_size=effective_config.get("dinov3_size", "base"),
             dinov3_weights_path=effective_config.get("dinov3_weights_path", None),
             dinov3_rope_dtype=effective_config.get("dinov3_rope_dtype", "bf16"),
+            # FDM flags
+            fdm_enable_apm=(effective_config.get("fdm", {}).get("enable_apm", False)
+                            if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_apm", False)),
+            fdm_apm_mode=(effective_config.get("fdm", {}).get("apm_mode", "S")
+                          if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_apm_mode", "S")),
+            fdm_enable_acpa=(effective_config.get("fdm", {}).get("enable_acpa", False)
+                             if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_acpa", False)),
         )
     else:
         raise NotImplementedError(f"Model '{effective_config['model_name']}' is not supported.")
