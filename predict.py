@@ -60,6 +60,11 @@ def cfg():
     dataset = "disaster"
     nb_shots = 10
     input_size = 512
+    # Backbone/version options (exposed for CLI override)
+    dino_version = config.get("dino_version", 2)
+    dinov2_size = config.get("dinov2_size", "base")
+    dinov3_size = config.get("dinov3_size", "base")
+    dinov3_weights_path = config.get("dinov3_weights_path", None)
 
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
@@ -69,6 +74,10 @@ def cfg():
         "dataset": dataset,
         "number_of_shots": nb_shots,
         "input_size": input_size,
+        "dino_version": dino_version,
+        "dinov2_size": dinov2_size,
+        "dinov3_size": dinov3_size,
+        "dinov3_weights_path": dinov3_weights_path,
     })
 
 
@@ -156,7 +165,9 @@ def main(_run, config: Dict[str, Any]):
             input_size=config["input_size"],
             model_repo_path=config["model_repo_path"],
             model_path=config["model_path"],
-            dinov2_size=config.get("dinov2_size", "base")
+            dinov2_size=config.get("dinov2_size", "base"),
+            dinov3_size=config.get("dinov3_size", "base"),
+            dinov3_weights_path=config.get("dinov3_weights_path", None),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")

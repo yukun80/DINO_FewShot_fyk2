@@ -59,6 +59,16 @@ python3 train.py with method=linear dataset=disaster nb_shots=10 lr=0.01 run_id=
 - To run multiple experiments for averaging, simply increment the `run_id` for each run (e.g., `run_id=2`, `run_id=3`).
 - All results, logs, and model checkpoints will be saved in a unique directory under `experiments/FSS_Training/`.
 
+To run training for DINOv3 with multilayer decoding on the `disaster` dataset (20-shot):
+```bash
+python3 train.py with method=multilayer dataset=disaster nb_shots=20 dino_version=3 dinov3_size=base run_id=1
+```
+If your DINOv3 weight filename differs, specify it explicitly:
+```bash
+python3 train.py with method=multilayer dataset=disaster nb_shots=20 dino_version=3 dinov3_size=base \
+  dinov3_weights_path='pretrain/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth' run_id=1
+```
+
 **Example: Evaluation**
 
 To evaluate a trained model, you must provide the path to the model checkpoint.
@@ -66,6 +76,10 @@ To evaluate a trained model, you must provide the path to the model checkpoint.
 python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=10
 ```
 - Evaluation metrics will be logged and saved in a new run under `experiments/FSS_Evaluation/`.
+
+Tip: When the checkpoint comes from this repo's Sacred training run, `eval.py` will automatically read the
+`config.json` stored next to the checkpoint and reuse backbone settings (e.g., `dino_version`, `dinov2_size`,
+`dinov3_size`, `dinov3_weights_path`, `method`, `input_size`). This means you can usually omit these flags at eval time.
 
 **Example: Prediction**
 
@@ -78,7 +92,9 @@ python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.p
 **Available Options:**
 - **Scripts**: `train.py`, `eval.py`, `predict.py`
 - **Methods**: `linear`, `multilayer`, `svf`, `lora`.
-- **Models**: `DINO` (configurable for v1/v2 and size in `configs/disaster.yaml`).
+- **Backbones**: `DINO` with `dino_version` in `{2, 3}` and size controls:
+  - DINOv2: `dinov2_size ∈ {small, base, large}`
+  - DINOv3: `dinov3_size ∈ {small, base, large}`, optional `dinov3_weights_path`
 - **Datasets**: The framework is currently optimized for the `disaster` dataset.
 
 

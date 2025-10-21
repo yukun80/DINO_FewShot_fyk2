@@ -3,6 +3,8 @@ num_classes: 2
 ignore_value: 255
 dino_version: 2
 dinov2_size: base # Supported sizes: small, base, large
+dinov3_size: base # Supported sizes: small, base, large (used when dino_version=3)
+dinov3_weights_path:  # Optional explicit path to a DINOv3 weight file
 
 #OPTIM:
 epochs: 300

@@ -24,10 +24,12 @@ Key Changes:
     The syntax is `python3 train.py with <key>=<value>`.
 
     - **Linear Probing (10-shot, LR=0.01, Run 1):**
-      python3 train.py with method=linear nb_shots=10 lr=0.01 run_id=1
+      python3 train.py with method=linear nb_shots=10 dino_version=2 dinov2_size=base run_id=1
+      python3 train.py with method=linear nb_shots=10 dino_version=3 dinov3_size=base run_id=1
       
     - **multilayer**
-      python3 train.py with method=multilayer nb_shots=20 lr=0.001 run_id=1
+      python3 train.py with method=multilayer nb_shots=20 run_id=1
+      python3 train.py with method=multilayer nb_shots=20 dino_version=3 dinov3_size=base run_id=1
 
     - **SVF (10-shot, LR=0.0001, Run 1, requires a pre-trained linear decoder):**
       python3 train.py with method=svf nb_shots=10 lr=0.0001 run_id=1
@@ -83,6 +85,11 @@ def cfg():
     lr = 0.01
     input_size = 512
     run_id = 1  # Used to distinguish between multiple runs of the same configuration
+    # Backbone/version options (exposed for CLI override)
+    dino_version = config.get("dino_version", 2)
+    dinov2_size = config.get("dinov2_size", "base")
+    dinov3_size = config.get("dinov3_size", "base")
+    dinov3_weights_path = config.get("dinov3_weights_path", None)
 
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
@@ -94,6 +101,13 @@ def cfg():
         "input_size": input_size,
         "run": run_id,
         "RNG_seed": run_id - 1  # Seed depends on the run_id for reproducibility
+    })
+    # Also surface backbone selection into the unified config dict
+    config.update({
+        "dino_version": dino_version,
+        "dinov2_size": dinov2_size,
+        "dinov3_size": dinov3_size,
+        "dinov3_weights_path": dinov3_weights_path,
     })
 
 
@@ -231,7 +245,9 @@ def main(_run, config):
             input_size=config["input_size"],
             model_repo_path=config["model_repo_path"],
             model_path=config["model_path"],
-            dinov2_size=config.get("dinov2_size", "base")
+            dinov2_size=config.get("dinov2_size", "base"),
+            dinov3_size=config.get("dinov3_size", "base"),
+            dinov3_weights_path=config.get("dinov3_weights_path", None),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")

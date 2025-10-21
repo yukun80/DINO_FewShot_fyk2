@@ -11,7 +11,7 @@ Purpose:
 
 --- Example Usage ---
 
-`python3 eval.py with checkpoint_path='path/to/your/model.pth' nb_shots=10`
+python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=20
 
 python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth' nb_shots=20
 
@@ -25,6 +25,7 @@ python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth'
 # -----------------------
 
 import os
+import json
 import yaml
 import torch
 import warnings
@@ -40,7 +41,7 @@ warnings.filterwarnings("ignore")
 
 # --- Sacred Experiment Setup ---
 ex = Experiment("FSS_Evaluation")
-ex.observers.append(FileStorageObserver('experiments/FSS_Evaluation'))
+ex.observers.append(FileStorageObserver("experiments/FSS_Evaluation"))
 
 
 @ex.config
@@ -59,6 +60,11 @@ def cfg():
     dataset = "disaster"
     nb_shots = 10
     input_size = 512
+    # Backbone/version options (exposed for CLI override)
+    dino_version = config.get("dino_version", 2)
+    dinov2_size = config.get("dinov2_size", "base")
+    dinov3_size = config.get("dinov3_size", "base")
+    dinov3_weights_path = config.get("dinov3_weights_path", None)
 
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
@@ -68,6 +74,10 @@ def cfg():
         "dataset": dataset,
         "number_of_shots": nb_shots,
         "input_size": input_size,
+        "dino_version": dino_version,
+        "dinov2_size": dinov2_size,
+        "dinov3_size": dinov3_size,
+        "dinov3_weights_path": dinov3_weights_path,
     })
 
 
@@ -76,6 +86,7 @@ class Metrics:
     A comprehensive metrics calculator for semantic segmentation.
     This class is designed to be clear, correct, and provide a thorough evaluation.
     """
+
     def __init__(self, num_classes: int):
         if num_classes <= 0:
             raise ValueError("Number of classes must be a positive integer.")
@@ -127,7 +138,9 @@ class Metrics:
 
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, device: torch.device, num_classes: int) -> Dict[str, float]:
+def evaluate(
+    model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, device: torch.device, num_classes: int
+) -> Dict[str, float]:
     """
     The main evaluation function.
 
@@ -142,12 +155,12 @@ def evaluate(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, d
     """
     model.eval()
     metrics_calculator = Metrics(num_classes)
-    
+
     print("Starting evaluation...")
     for image, target, _ in data_loader:
         image, target = image.to(device), target.to(device)
         output = model(image)
-        output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
+        output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode="bilinear", align_corners=False)
         metrics_calculator.update(output.argmax(1), target)
 
     computed_metrics = metrics_calculator.compute()
@@ -160,53 +173,101 @@ def main(_run, config: Dict[str, Any]):
     The main entry point for the evaluation script, managed by Sacred.
     """
     if config["checkpoint_path"] is None:
-        raise ValueError("A `checkpoint_path` must be provided via the command line. Ex: `with checkpoint_path='path/to/model.pth'`")
+        raise ValueError(
+            "A `checkpoint_path` must be provided via the command line. Ex: `with checkpoint_path='path/to/model.pth'`"
+        )
 
     # --- Environment Setup ---
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     print(f"Evaluating model from: {config['checkpoint_path']}")
 
+    # Work on a mutable copy to avoid Sacred's read-only config during capture
+    effective_config: Dict[str, Any] = dict(config)
+
+    # --- Sync config with training run if possible ---
+    # If the checkpoint is from a Sacred training run, load its config.json to
+    # ensure we instantiate the exact same model settings (e.g., method, sizes).
+    run_dir = os.path.dirname(effective_config["checkpoint_path"]) if effective_config["checkpoint_path"] else None
+    train_cfg_path = os.path.join(run_dir, "config.json") if run_dir else None
+    if train_cfg_path and os.path.exists(train_cfg_path):
+        try:
+            with open(train_cfg_path, "r") as f:
+                train_meta = json.load(f)
+            train_cfg = train_meta.get("config", train_meta)
+            keys_to_copy = [
+                "model_name",
+                "method",
+                "dino_version",
+                "dinov2_size",
+                "dinov3_size",
+                "dinov3_weights_path",
+                "input_size",
+                "num_classes",
+                "dataset",
+                "number_of_shots",
+                "dataset_dir",
+                "model_path",
+                "model_repo_path",
+                "split_file",
+                "val_input_size",
+                "val_label_size",
+                "max_eval",
+            ]
+            for k in keys_to_copy:
+                if k in train_cfg:
+                    effective_config[k] = train_cfg[k]
+            print(f"Loaded training config from: {train_cfg_path}")
+            print(
+                f"Using version={effective_config.get('dino_version', 2)}, method='{effective_config['method']}', "
+                f"dinov2_size='{effective_config.get('dinov2_size', 'base')}', dinov3_size='{effective_config.get('dinov3_size', 'base')}', "
+                f"input_size={effective_config['input_size']}"
+            )
+        except Exception as e:
+            print(f"Warning: failed to read training config at {train_cfg_path}: {e}")
+
     # --- Model Initialization and Loading ---
     print("Initializing model...")
-    if config["model_name"] == "DINO":
+    if effective_config["model_name"] == "DINO":
         model = DINO_linear(
-            version=config.get("dino_version", 2),
-            method=config["method"],
-            num_classes=config["num_classes"],
-            input_size=config["input_size"],
-            model_repo_path=config["model_repo_path"],
-            model_path=config["model_path"],
-            dinov2_size=config.get("dinov2_size", "base")
+            version=effective_config.get("dino_version", 2),
+            method=effective_config["method"],
+            num_classes=effective_config["num_classes"],
+            input_size=effective_config["input_size"],
+            model_repo_path=effective_config["model_repo_path"],
+            model_path=effective_config["model_path"],
+            dinov2_size=effective_config.get("dinov2_size", "base"),
+            dinov3_size=effective_config.get("dinov3_size", "base"),
+            dinov3_weights_path=effective_config.get("dinov3_weights_path", None),
         )
     else:
-        raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")
+        raise NotImplementedError(f"Model '{effective_config['model_name']}' is not supported.")
 
-    if not os.path.exists(config["checkpoint_path"]):
-        raise FileNotFoundError(f"Model checkpoint not found at: {config['checkpoint_path']}")
-        
-    model.load_state_dict(torch.load(config["checkpoint_path"], map_location=device))
+    if not os.path.exists(effective_config["checkpoint_path"]):
+        raise FileNotFoundError(f"Model checkpoint not found at: {effective_config['checkpoint_path']}")
+
+    model.load_state_dict(torch.load(effective_config["checkpoint_path"], map_location=device))
     model.to(device)
 
     # --- Data Loading ---
     print("Loading validation (query) dataset...")
-    _, val_loader, _ = get_dataset_loaders(config)
+    _, val_loader, _ = get_dataset_loaders(effective_config)
 
     # --- Run Evaluation ---
-    computed_metrics = evaluate(model, val_loader, device, config["num_classes"])
+    computed_metrics = evaluate(model, val_loader, device, effective_config["num_classes"])
 
     # --- Log Metrics and Display Results ---
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print(" " * 18 + "Evaluation Results")
-    print("="*50)
+    print("=" * 50)
     for name, value in computed_metrics.items():
         # Log each metric to Sacred
         _run.log_scalar(f"metrics.{name}", value)
         print(f"{name:<20}: {value}%")
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
 
     # Add the model path as an artifact for traceability
-    _run.add_artifact(config["checkpoint_path"])
+    _run.add_artifact(effective_config["checkpoint_path"])
 
     print(f"Evaluation complete. Results logged to Sacred run {_run._id}.")
     return computed_metrics["Mean_IoU"]
