@@ -4,9 +4,6 @@ It has been refactored to use Sacred for robust experiment tracking and manageme
 
 --- Example Usage ---
 
-1.  **Generate Data Splits (if not already done):**
-    python3 datasets/generate_disaster_splits.py --path /path/to/your/Exp_Disaster_Few-Shot --shots 10
-
 2.  **Run Training with Sacred:**
     The syntax is `python3 train.py with <key>=<value>`.
 
@@ -15,15 +12,14 @@ It has been refactored to use Sacred for robust experiment tracking and manageme
       python3 train.py with method=linear nb_shots=10 dino_version=3 dinov3_size=base run_id=1
 
     - **multilayer**
-      python3 train.py with method=multilayer nb_shots=20 dino_version=2 dinov2_size=base run_id=1
+      python3 train.py with method=multilayer nb_shots=9 dino_version=2 dinov2_size=base run_id=1
+      python3 train.py with method=multilayer nb_shots=45 dino_version=2 dinov2_size=base run_id=1
+      
       python3 train.py with method=multilayer nb_shots=20 dino_version=3 dinov3_size=base run_id=3
 
     - **SVF (10-shot, LR=0.0001, Run 1, requires a pre-trained linear decoder):**
       python3 train.py with method=svf nb_shots=10 lr=0.0001 run_id=1
 
-    - **To run the second and third runs, simply increment `run_id`:**
-      python3 train.py with method=linear nb_shots=10 lr=0.01 run_id=2
-      python3 train.py with method=linear nb_shots=10 lr=0.01 run_id=3
 """
 
 # --- Example Command ---

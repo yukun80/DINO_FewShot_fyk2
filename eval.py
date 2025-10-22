@@ -16,7 +16,7 @@ python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth'
 python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov3_multilayer/best_model.pth' nb_shots=20
 
 # IFA
-python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm/best_model.pth' nb_shots=20 use_ifa=True ifa_iters=3 ifa_refine=True
+python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm_5shot/best_model.pth' nb_shots=45 use_ifa=True ifa_iters=3 ifa_refine=True
 
 - The `model_path` is required.
 - Other parameters (`method`, `dataset`, `input_size`, etc.) should match the

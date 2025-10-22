@@ -38,7 +38,7 @@ exclude_classes: []
 
 #dataset
 dataset_name: disaster
-split_file: datasets/disaster_20shot_splits.json
+split_file: datasets/disaster_5shot_splits.json
 batch_size: 1 # For few-shot, batch size is often 1
 train_min_size: 512
 train_max_size: 512
