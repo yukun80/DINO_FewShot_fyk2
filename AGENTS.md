@@ -9,6 +9,9 @@
 - Pretrained weights: `pretrain/` (DINOv2/DINOv3 checkpoints).
 - Experiment outputs: created under `experiments/` by Sacred; keep out of git.
   - Sacred controls run directories; YAML has no `save_dir`.
+ - IFA (inference-time) helpers:
+   - `modules/module_IFA/ifa_head.py`: channel‑agnostic, multi‑iteration IFA/BFP/SSP head (inference‑only).
+   - `utils/ifa.py`: shared helpers for encoder feature extraction, optional FDM-on-features, and IFA inference.
 
 ## Build, Test, and Development Commands
 - Setup (recommended venv):
@@ -40,6 +43,35 @@
   - Batch‑agnostic APM parameters: masks are initialized lazily to `[1,1,H,W]` or `[1,C,H,W]` at first use.
   - Shapes are preserved; decoders (linear/DPT) require no changes.
   - Code points: see `models/backbones/dino.py` around the decoder paths.
+
+## IFA Inference Enhancement (Route A)
+- Purpose: Optional, training‑free enhancement that iteratively refines foreground/background prototypes (BFP/SSP) on encoder features to improve cross‑domain few‑shot segmentation.
+- Where: Integrated into both `predict.py` and `eval.py`. Enabled via Sacred CLI keys (declared in `@ex.config`).
+- Support set for IFA:
+  - Uses the training split (`train_split` / “support”) from your split file.
+  - K is taken from `nb_shots` and the first K samples are used as supports; their features are cached once and reused for all queries.
+- Multi‑iteration + refine:
+  - `ifa_iters` controls the number of BFP iterations (default 3).
+  - `ifa_refine=True` enables an extra refine step in the first iteration (as in the original IFA).
+- Linear vs. Multilayer:
+  - `linear`: IFA runs on the last encoder feature and its logits are upsampled and fused.
+  - `multilayer`: IFA runs on the four spread layers; per‑scale logits are upsampled and fused via `ifa_ms_weights` (default `[0.1,0.2,0.3,0.4]`, deeper layers higher weight).
+- FDM parity on features:
+  - Set `ifa_use_fdm=True` (default) to apply APM→ACPA to the encoder features used by IFA, with the same policy as training: deeper‑two for `multilayer`, last‑only for `linear`.
+  - FDM is applied only if the model actually has APM/ACPA enabled; otherwise it is skipped.
+- Logit fusion with the trained decoder output:
+  - Final logits = `(1‑ifa_alpha) * base_logits + ifa_alpha * ifa_logits` (default `ifa_alpha=0.3`).
+- Hyper‑parameters (CLI keys):
+  - `use_ifa` (bool), `ifa_iters` (int), `ifa_refine` (bool), `ifa_alpha` (float),
+    `ifa_ms_weights` (list[float], multilayer only), `ifa_temp` (float),
+    `ifa_fg_thresh`/`ifa_bg_thresh` (float), `ifa_use_fdm` (bool).
+
+### Quick Commands
+- Predict with IFA (multilayer example):
+  - ``python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' method=multilayer nb_shots=10 use_ifa=True ifa_use_fdm=True ifa_iters=3 ifa_refine=True``
+- Evaluate with IFA and report deltas (Base vs. IFA):
+  - ``python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm/best_model.pth' nb_shots=20 use_ifa=True ifa_use_fdm=True ifa_iters=3 ifa_refine=True``
+  - Eval logs both `Base_*` and `IFA_*` metrics and `Delta_*` (e.g., `Delta_mIoU`).
 
 Notes on methods
 - `multilayer`: Uses a SegDINO-aligned DPT decoder with spread layer sampling.
@@ -84,6 +116,9 @@ Training Stability Tips
   - Small split (`--shots 1`) and verify training loop and evaluation complete without errors.
   - Use `eval.py` to confirm metrics log and model loads correctly.
 - Keep runs reproducible: set `run_id` (affects RNG seed) and record CLI commands.
+ - For IFA eval/predict smoke‑tests:
+   - Start with `nb_shots=1` and `use_ifa=True ifa_iters=3 ifa_alpha=0.3`.
+   - For multilayer models trained with FDM, keep `ifa_use_fdm=True` to mirror training features.
 
 ## Commit & Pull Request Guidelines
 - Commits: imperative, present tense; concise summary line (e.g., "Add DINOv2 multilayer support").

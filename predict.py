@@ -14,6 +14,9 @@ Purpose:
 
 `python3 predict.py with checkpoint_path='path/to/your/model.pth' nb_shots=10`
 
+# IFA
+python3 predict.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm/best_model.pth' nb_shots=20 use_ifa=True ifa_iters=3 ifa_refine=True
+
 - The `model_path` is required.
 - The output directory is managed automatically by Sacred.
 - Other parameters should match the model's training configuration.
@@ -24,6 +27,7 @@ Purpose:
 # -----------------------
 
 import os
+import json
 import yaml
 import torch
 import warnings
@@ -36,6 +40,8 @@ from sacred.observers import FileStorageObserver
 # --- Project-specific Imports ---
 from utils.train_utils import get_dataset_loaders
 from models.backbones.dino import DINO_linear
+from utils.ifa import extract_encoder_features, run_ifa_inference
+import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
 
@@ -67,6 +73,17 @@ def cfg():
     dinov3_weights_path = config.get("dinov3_weights_path", None)
     dinov3_rope_dtype = config.get("dinov3_rope_dtype", "bf16")
 
+    # IFA options (explicit keys so Sacred recognizes CLI overrides)
+    use_ifa = False
+    ifa_iters = 3
+    ifa_refine = True
+    ifa_alpha = 0.3
+    ifa_ms_weights = [0.1, 0.2, 0.3, 0.4]
+    ifa_temp = 10.0
+    ifa_fg_thresh = 0.7
+    ifa_bg_thresh = 0.6
+    ifa_use_fdm = True  # Apply FDM to features before IFA (parity with training)
+
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
         "checkpoint_path": checkpoint_path,
@@ -80,6 +97,16 @@ def cfg():
         "dinov3_size": dinov3_size,
         "dinov3_weights_path": dinov3_weights_path,
         "dinov3_rope_dtype": dinov3_rope_dtype,
+        # IFA prediction options (inference-only)
+        "use_ifa": use_ifa,
+        "ifa_iters": ifa_iters,
+        "ifa_refine": ifa_refine,
+        "ifa_alpha": ifa_alpha,
+        "ifa_ms_weights": ifa_ms_weights,
+        "ifa_temp": ifa_temp,
+        "ifa_fg_thresh": ifa_fg_thresh,
+        "ifa_bg_thresh": ifa_bg_thresh,
+        "ifa_use_fdm": ifa_use_fdm,
     })
 
 
@@ -95,7 +122,9 @@ def predict_and_visualize(
     data_loader: torch.utils.data.DataLoader,
     device: torch.device,
     output_dir: str,
-    _run: Experiment.run
+    _run: Experiment.run,
+    base_config: Dict[str, Any],
+    support_pack: Dict[str, Any],
 ) -> None:
     """
     The main prediction and visualization function.
@@ -108,8 +137,11 @@ def predict_and_visualize(
         _run: The Sacred run object for adding artifacts.
     """
     model.eval()
+    # Store visual PNGs in a dedicated subfolder to separate from Sacred JSONs
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Starting prediction... Visualizations will be saved to '{output_dir}'")
+    images_dir = os.path.join(output_dir, "predictions")
+    os.makedirs(images_dir, exist_ok=True)
+    print(f"Starting prediction... Visualizations will be saved to '{images_dir}'")
 
     for i, (image, target, image_path) in enumerate(data_loader):
         if not isinstance(image_path, str):
@@ -121,6 +153,22 @@ def predict_and_visualize(
         image = image.to(device)
         output = model(image)
         output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
+
+        # Optional IFA enhancement (inference-time)
+        if base_config.get("use_ifa", False) and base_config["method"] in ("linear", "multilayer"):
+            logits_ifa = run_ifa_inference(
+                model=model,
+                image=image,
+                method=base_config["method"],
+                version=base_config.get("dino_version", 2),
+                input_size=base_config.get("input_size", 512),
+                ifa_cfg=base_config,
+                support_pack=support_pack,
+                out_size=target.shape[-2:],
+                use_fdm_on_feats=bool(base_config.get("ifa_use_fdm", True)),
+            )
+            alpha = float(base_config.get("ifa_alpha", 0.3))
+            output = (1.0 - alpha) * output + alpha * logits_ifa
         prediction = torch.argmax(output, 1).squeeze(0).cpu().numpy().astype(np.uint8)
 
         # --- Visualization ---
@@ -131,11 +179,11 @@ def predict_and_visualize(
         # --- Save the Result and Add as Artifact ---
         base_name = os.path.basename(image_path)
         file_name, _ = os.path.splitext(base_name)
-        output_path = os.path.join(output_dir, f"{file_name}_pred.png")
+        output_path = os.path.join(images_dir, f"{file_name}_pred.png")
         pred_image.save(output_path)
 
-        # Add the generated image as a named artifact to the Sacred run
-        _run.add_artifact(output_path, name=f"prediction_{file_name}.png")
+        # Add the generated image as a named artifact under the same subfolder
+        _run.add_artifact(output_path, name=f"predictions/{file_name}_pred.png")
 
         if (i + 1) % 10 == 0:
             print(f"Processed {i + 1}/{len(data_loader)} images...")
@@ -157,43 +205,123 @@ def main(_run, config: Dict[str, Any]):
     print(f"Using device: {device}")
     print(f"Predicting with model from: {config['checkpoint_path']}")
 
+    # Sync runtime config with training run's config.json (if available)
+    effective_config: Dict[str, Any] = dict(config)
+    run_dir = os.path.dirname(effective_config["checkpoint_path"]) if effective_config["checkpoint_path"] else None
+    train_cfg_path = os.path.join(run_dir, "config.json") if run_dir else None
+    if train_cfg_path and os.path.exists(train_cfg_path):
+        try:
+            with open(train_cfg_path, "r") as f:
+                train_meta = json.load(f)
+            train_cfg = train_meta.get("config", train_meta)
+            keys_to_copy = [
+                "model_name",
+                "method",
+                "dino_version",
+                "dinov2_size",
+                "dinov3_size",
+                "dinov3_weights_path",
+                "dinov3_rope_dtype",
+                "input_size",
+                "num_classes",
+                "dataset",
+                "number_of_shots",
+                "dataset_dir",
+                "model_path",
+                "model_repo_path",
+                "split_file",
+                "val_input_size",
+                "val_label_size",
+                "max_eval",
+                "fdm",
+                "fdm_enable_apm",
+                "fdm_apm_mode",
+                "fdm_enable_acpa",
+            ]
+            for k in keys_to_copy:
+                if k in train_cfg:
+                    effective_config[k] = train_cfg[k]
+            print(f"Loaded training config from: {train_cfg_path}")
+            print(
+                f"Using version={effective_config.get('dino_version', 2)}, method='{effective_config['method']}', "
+                f"dinov2_size='{effective_config.get('dinov2_size', 'base')}', dinov3_size='{effective_config.get('dinov3_size', 'base')}', "
+                f"input_size={effective_config['input_size']}"
+            )
+        except Exception as e:
+            print(f"Warning: failed to read training config at {train_cfg_path}: {e}")
+
     # --- Model Initialization and Loading ---
     print("Initializing model...")
-    if config["model_name"] == "DINO":
+    if effective_config["model_name"] == "DINO":
         model = DINO_linear(
-            version=config.get("dino_version", 2),
-            method=config["method"],
-            num_classes=config["num_classes"],
-            input_size=config["input_size"],
-            model_repo_path=config["model_repo_path"],
-            model_path=config["model_path"],
-            dinov2_size=config.get("dinov2_size", "base"),
-            dinov3_size=config.get("dinov3_size", "base"),
-            dinov3_weights_path=config.get("dinov3_weights_path", None),
-            dinov3_rope_dtype=config.get("dinov3_rope_dtype", "bf16"),
+            version=effective_config.get("dino_version", 2),
+            method=effective_config["method"],
+            num_classes=effective_config["num_classes"],
+            input_size=effective_config["input_size"],
+            model_repo_path=effective_config["model_repo_path"],
+            model_path=effective_config["model_path"],
+            dinov2_size=effective_config.get("dinov2_size", "base"),
+            dinov3_size=effective_config.get("dinov3_size", "base"),
+            dinov3_weights_path=effective_config.get("dinov3_weights_path", None),
+            dinov3_rope_dtype=effective_config.get("dinov3_rope_dtype", "bf16"),
             # FDM flags
-            fdm_enable_apm=(config.get("fdm", {}).get("enable_apm", False)
-                            if isinstance(config.get("fdm", {}), dict) else config.get("fdm_enable_apm", False)),
-            fdm_apm_mode=(config.get("fdm", {}).get("apm_mode", "S")
-                          if isinstance(config.get("fdm", {}), dict) else config.get("fdm_apm_mode", "S")),
-            fdm_enable_acpa=(config.get("fdm", {}).get("enable_acpa", False)
-                             if isinstance(config.get("fdm", {}), dict) else config.get("fdm_enable_acpa", False)),
+            fdm_enable_apm=(effective_config.get("fdm", {}).get("enable_apm", False)
+                            if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_apm", False)),
+            fdm_apm_mode=(effective_config.get("fdm", {}).get("apm_mode", effective_config.get("fdm_apm_mode", "S"))
+                          if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_apm_mode", "S")),
+            fdm_enable_acpa=(effective_config.get("fdm", {}).get("enable_acpa", False)
+                             if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_acpa", False)),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")
 
-    if not os.path.exists(config["checkpoint_path"]):
-        raise FileNotFoundError(f"Model checkpoint not found at: {config['checkpoint_path']}")
+    if not os.path.exists(effective_config["checkpoint_path"]):
+        raise FileNotFoundError(f"Model checkpoint not found at: {effective_config['checkpoint_path']}")
 
-    model.load_state_dict(torch.load(config["checkpoint_path"], map_location=device))
+    model.load_state_dict(torch.load(effective_config["checkpoint_path"], map_location=device))
     model.to(device)
 
     # --- Data Loading ---
-    print("Loading validation (query) dataset...")
-    _, val_loader, _ = get_dataset_loaders(config)
+    print("Loading datasets (support/query)...")
+    train_loader, val_loader, train_set = get_dataset_loaders(effective_config)
+
+    # Prepare support features for IFA if enabled
+    support_pack: Dict[str, Any] = {}
+    if effective_config.get("use_ifa", False) and effective_config["method"] in ("linear", "multilayer"):
+        k = int(effective_config.get("number_of_shots", 1))
+        support_imgs = []
+        support_msks = []
+        for idx in range(min(k, len(train_set))):
+            img_s, msk_s, _ = train_set[idx]
+            support_imgs.append(img_s.unsqueeze(0))
+            support_msks.append(msk_s)
+        if len(support_imgs) == 0:
+            raise RuntimeError("IFA enabled but no support samples found in train_split.")
+
+        with torch.no_grad():
+            feats_per_support: list = []
+            for img in support_imgs:
+                feats = extract_encoder_features(
+                    model,
+                    img.to(device),
+                    version=effective_config.get("dino_version", 2),
+                    input_size=effective_config.get("input_size", 512),
+                )
+                feats_per_support.append(feats)
+
+            # Transpose to scale-major: [S][K]
+            num_scales = len(feats_per_support[0])
+            feats_s_ms = []
+            for s in range(num_scales):
+                feats_s_ms.append([feats_per_support[k][s] for k in range(len(feats_per_support))])
+
+        support_pack = {
+            "feats_s_ms": feats_s_ms,
+            "masks_s": support_msks,
+        }
 
     # --- Run Prediction and Visualization ---
-    predict_and_visualize(model, val_loader, device, output_dir, _run)
+    predict_and_visualize(model, val_loader, device, output_dir, _run, effective_config, support_pack)
 
     print(f"Prediction complete. Visualizations saved to: {output_dir}")
     return f"Completed prediction run {_run._id}."

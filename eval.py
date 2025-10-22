@@ -13,7 +13,10 @@ Purpose:
 
 python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth' nb_shots=10
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=20
+python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov3_multilayer/best_model.pth' nb_shots=20
+
+# IFA
+python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm/best_model.pth' nb_shots=20 use_ifa=True ifa_iters=3 ifa_refine=True
 
 - The `model_path` is required.
 - Other parameters (`method`, `dataset`, `input_size`, etc.) should match the
@@ -29,13 +32,15 @@ import json
 import yaml
 import torch
 import warnings
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
 
 # --- Project-specific Imports ---
 from utils.train_utils import get_dataset_loaders
 from models.backbones.dino import DINO_linear
+from utils.ifa import extract_encoder_features, run_ifa_inference
+import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
 
@@ -67,6 +72,17 @@ def cfg():
     dinov3_weights_path = config.get("dinov3_weights_path", None)
     dinov3_rope_dtype = config.get("dinov3_rope_dtype", "bf16")
 
+    # IFA options (explicit keys so Sacred recognizes CLI overrides)
+    use_ifa = False
+    ifa_iters = 3
+    ifa_refine = True
+    ifa_alpha = 0.3
+    ifa_ms_weights = [0.1, 0.2, 0.3, 0.4]
+    ifa_temp = 10.0
+    ifa_fg_thresh = 0.7
+    ifa_bg_thresh = 0.6
+    ifa_use_fdm = True  # Apply FDM to features before IFA (parity with training)
+
     # Merge CLI-accessible parameters into the main config dictionary
     config.update({
         "checkpoint_path": checkpoint_path,
@@ -80,6 +96,16 @@ def cfg():
         "dinov3_size": dinov3_size,
         "dinov3_weights_path": dinov3_weights_path,
         "dinov3_rope_dtype": dinov3_rope_dtype,
+        # IFA evaluation options (inference-only)
+        "use_ifa": use_ifa,
+        "ifa_iters": ifa_iters,
+        "ifa_refine": ifa_refine,
+        "ifa_alpha": ifa_alpha,
+        "ifa_ms_weights": ifa_ms_weights,
+        "ifa_temp": ifa_temp,
+        "ifa_fg_thresh": ifa_fg_thresh,
+        "ifa_bg_thresh": ifa_bg_thresh,
+        "ifa_use_fdm": ifa_use_fdm,
     })
 
 
@@ -141,7 +167,12 @@ class Metrics:
 
 @torch.no_grad()
 def evaluate(
-    model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, device: torch.device, num_classes: int
+    model: torch.nn.Module,
+    data_loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    num_classes: int,
+    base_config: Dict[str, Any],
+    support_pack: Dict[str, Any],
 ) -> Dict[str, float]:
     """
     The main evaluation function.
@@ -156,17 +187,47 @@ def evaluate(
         A dictionary containing the computed performance metrics.
     """
     model.eval()
-    metrics_calculator = Metrics(num_classes)
+    metrics_base = Metrics(num_classes)
+    metrics_ifa = Metrics(num_classes) if (base_config.get("use_ifa", False) and base_config["method"] in ("linear", "multilayer")) else None
 
     print("Starting evaluation...")
     for image, target, _ in data_loader:
         image, target = image.to(device), target.to(device)
         output = model(image)
         output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode="bilinear", align_corners=False)
-        metrics_calculator.update(output.argmax(1), target)
+        metrics_base.update(output.argmax(1), target)
 
-    computed_metrics = metrics_calculator.compute()
-    return computed_metrics
+        # Optional IFA enhancement (side-by-side to quantify gain)
+        if metrics_ifa is not None:
+            logits_ifa = run_ifa_inference(
+                model=model,
+                image=image,
+                method=base_config["method"],
+                version=base_config.get("dino_version", 2),
+                input_size=base_config.get("input_size", 512),
+                ifa_cfg=base_config,
+                support_pack=support_pack,
+                out_size=target.shape[-2:],
+                use_fdm_on_feats=bool(base_config.get("ifa_use_fdm", True)),
+            )
+            alpha = float(base_config.get("ifa_alpha", 0.3))
+            out_fused = (1.0 - alpha) * output + alpha * logits_ifa
+            metrics_ifa.update(out_fused.argmax(1), target)
+
+    results = {}
+    base_res = metrics_base.compute()
+    results.update({f"Base_{k}": v for k, v in base_res.items()})
+    if metrics_ifa is not None:
+        ifa_res = metrics_ifa.compute()
+        results.update({f"IFA_{k}": v for k, v in ifa_res.items()})
+        # Also report absolute deltas for key metrics
+        if "Mean_IoU" in base_res and "Mean_IoU" in ifa_res:
+            results["Delta_mIoU"] = round(ifa_res["Mean_IoU"] - base_res["Mean_IoU"], 2)
+        if "Overall_Accuracy" in base_res and "Overall_Accuracy" in ifa_res:
+            results["Delta_Overall_Acc"] = round(ifa_res["Overall_Accuracy"] - base_res["Overall_Accuracy"], 2)
+        if "Landslide_IoU" in base_res and "Landslide_IoU" in ifa_res:
+            results["Delta_Landslide_IoU"] = round(ifa_res["Landslide_IoU"] - base_res["Landslide_IoU"], 2)
+    return results
 
 
 @ex.automain
@@ -186,6 +247,20 @@ def main(_run, config: Dict[str, Any]):
 
     # Work on a mutable copy to avoid Sacred's read-only config during capture
     effective_config: Dict[str, Any] = dict(config)
+
+    # Mark IFA-related keys as 'used' in Sacred by accessing them from the original
+    # Sacred-config object. We actually consume them via `effective_config` below,
+    # but Sacred's usage tracking requires touching the original `config`.
+    _ = (
+        config.get("use_ifa", False),
+        config.get("ifa_iters", 3),
+        config.get("ifa_refine", True),
+        config.get("ifa_alpha", 0.3),
+        config.get("ifa_ms_weights", [0.1, 0.2, 0.3, 0.4]),
+        config.get("ifa_temp", 10.0),
+        config.get("ifa_fg_thresh", 0.7),
+        config.get("ifa_bg_thresh", 0.6),
+    )
 
     # --- Sync config with training run if possible ---
     # If the checkpoint is from a Sacred training run, load its config.json to
@@ -261,11 +336,41 @@ def main(_run, config: Dict[str, Any]):
     model.to(device)
 
     # --- Data Loading ---
-    print("Loading validation (query) dataset...")
-    _, val_loader, _ = get_dataset_loaders(effective_config)
+    print("Loading datasets (support/query) for evaluation...")
+    train_loader, val_loader, train_set = get_dataset_loaders(effective_config)
+
+    # Build support cache if IFA is enabled
+    support_pack: Dict[str, Any] = {}
+    if effective_config.get("use_ifa", False) and effective_config["method"] in ("linear", "multilayer"):
+        k = int(effective_config.get("number_of_shots", 1))
+        support_imgs = []
+        support_msks = []
+        for idx in range(min(k, len(train_set))):
+            img_s, msk_s, _ = train_set[idx]
+            support_imgs.append(img_s.unsqueeze(0))
+            support_msks.append(msk_s)
+        if len(support_imgs) == 0:
+            raise RuntimeError("IFA enabled but no support samples found in train_split for evaluation.")
+
+        with torch.no_grad():
+            feats_per_support: List[List[torch.Tensor]] = []
+            for img in support_imgs:
+                feats = extract_encoder_features(
+                    model,
+                    img.to(device),
+                    version=effective_config.get("dino_version", 2),
+                    input_size=effective_config.get("input_size", 512),
+                )
+                feats_per_support.append(feats)
+            num_scales = len(feats_per_support[0])
+            feats_s_ms: List[List[torch.Tensor]] = []
+            for s in range(num_scales):
+                feats_s_ms.append([feats_per_support[k][s] for k in range(len(feats_per_support))])
+
+        support_pack = {"feats_s_ms": feats_s_ms, "masks_s": support_msks}
 
     # --- Run Evaluation ---
-    computed_metrics = evaluate(model, val_loader, device, effective_config["num_classes"])
+    computed_metrics = evaluate(model, val_loader, device, effective_config["num_classes"], effective_config, support_pack)
 
     # --- Log Metrics and Display Results ---
     print("\n" + "=" * 50)
@@ -281,4 +386,8 @@ def main(_run, config: Dict[str, Any]):
     _run.add_artifact(effective_config["checkpoint_path"])
 
     print(f"Evaluation complete. Results logged to Sacred run {_run._id}.")
-    return computed_metrics["Mean_IoU"]
+    # Prefer returning IFA mIoU if available, else base
+    if "IFA_Mean_IoU" in computed_metrics:
+        return computed_metrics["IFA_Mean_IoU"]
+    else:
+        return computed_metrics.get("Base_Mean_IoU", 0.0)

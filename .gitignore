@@ -11,4 +11,4 @@ experiments/
 pretrain/
 # modules/
 modules/module_segdino/
-modules/module2/
+modules/module_IFA
