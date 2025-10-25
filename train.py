@@ -200,6 +200,25 @@ def evaluate(model, data_loader, device, confmat, max_eval):
     return confmat
 
 
+def save_periodic_checkpoint(model, optimizer, lr_scheduler, best_mIU, epoch_idx, save_dir, run):
+    """
+    Serializes a training snapshot so runs can be resumed or inspected mid-flight.
+    """
+    checkpoint = {
+        "epoch": epoch_idx + 1,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "lr_scheduler_state": lr_scheduler.state_dict() if lr_scheduler is not None else None,
+        "best_mIoU": best_mIU,
+        "timestamp": time.time(),
+    }
+    filename = f"checkpoint_epoch_{epoch_idx + 1:04d}.pth"
+    checkpoint_path = os.path.join(save_dir, filename)
+    torch.save(checkpoint, checkpoint_path)
+    run.add_artifact(checkpoint_path, name=filename)
+    print(f"[Checkpoint] Saved periodic checkpoint to {checkpoint_path}")
+
+
 def train_one_epoch(
     model, loss_fun, optimizer, loader, lr_scheduler, _run, epoch, config, train_set, clip_grad_norm=None
 ):
@@ -295,8 +314,6 @@ def get_epochs_to_eval(config):
     eval_epochs = {i * eval_every - 1 for i in range(1, epochs // eval_every + 1)}
     eval_epochs.add(0)
     eval_epochs.add(epochs - 1)
-    if "eval_last_k_epochs" in config:
-        eval_epochs.update(range(max(0, epochs - config["eval_last_k_epochs"]), epochs))
     return sorted(list(eval_epochs))
 
 
@@ -418,6 +435,14 @@ def main(_run, config):
     start_time = time.time()
     best_mIU = 0
     eval_on_epochs = get_epochs_to_eval(config)
+    checkpoint_every = config.get("checkpoint_every_epochs", None)
+    if checkpoint_every is not None:
+        try:
+            checkpoint_every = int(checkpoint_every)
+        except (TypeError, ValueError):
+            checkpoint_every = None
+    if checkpoint_every is not None and checkpoint_every <= 0:
+        checkpoint_every = None
 
     for epoch in range(config["epochs"]):
         if hasattr(train_set, "build_epoch"):
@@ -460,6 +485,17 @@ def main(_run, config):
                 save_path = os.path.join(save_dir, "best_model.pth")
                 torch.save(model.state_dict(), save_path)
                 _run.log_scalar("eval.best_mIoU", best_mIU, step=epoch)
+
+        if checkpoint_every and (epoch + 1) % checkpoint_every == 0:
+            save_periodic_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                best_mIU=best_mIU,
+                epoch_idx=epoch,
+                save_dir=save_dir,
+                run=_run,
+            )
 
     # --- Finalization ---
     total_time = time.time() - start_time

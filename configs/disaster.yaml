@@ -16,7 +16,7 @@ fdm:
 #OPTIM:
 # - DINOv2：lr≈5e-4, weight_decay≈1e-4, momentum=0.9
 # - DINOv3：lr≈1e-3, weight_decay≈1e-4, momentum=0.9
-epochs: 200
+epochs: 100
 lr: 0.001
 momentum: 0.9
 weight_decay: 0.0001
@@ -41,7 +41,7 @@ model_name: DINO
 method: multilayer           # {linear|multilayer}
 encoder_adapters: svf        # {none|lora|svf}
 input_size: 512
-number_of_shots: 9          # K for IFA support set selection
+number_of_shots: 1          # K for IFA support set selection
 
 # IFA training defaults
 use_ifa_train: true
@@ -55,7 +55,7 @@ ifa_bg_thresh: 0.6
 ifa_use_fdm: true
 ifa_loss_w_main: 0.3
 ifa_loss_w_aux: 0.0
-ifa_train_support_k: 9      # Use <= number_of_shots supports each iter to save memory
+ifa_train_support_k: 1      # Use <= number_of_shots supports each iter to save memory
 ifa_detach_support: true     # Detach support features to reduce graph size
 
 #dataset
@@ -78,7 +78,7 @@ train_print_every: 10
 
 #checkpoint
 eval_every_k_epochs: 10
-eval_last_k_epochs: 5
+checkpoint_every_epochs: 10  # <=0 disables periodic checkpointing
 dataset_dir : ../_datasets/Exp_Disaster_Few-Shot # Relative path to dataset
 model_path : ./pretrain         # Directory containing pre-trained backbone weights
 model_repo_path : ./exp/        # Directory containing local backbone repos (e.g., dinov2)

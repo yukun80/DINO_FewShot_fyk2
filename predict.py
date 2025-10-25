@@ -17,6 +17,8 @@ Purpose:
 # IFA
 python3 predict.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm_5shot/best_model.pth' nb_shots=45 use_ifa=True ifa_iters=3 ifa_refine=True
 
+python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth'
+
 - The `model_path` is required.
 - The output directory is managed automatically by Sacred.
 - Other parameters should match the model's training configuration.
@@ -47,7 +49,7 @@ warnings.filterwarnings("ignore")
 
 # --- Sacred Experiment Setup ---
 ex = Experiment("FSS_Prediction")
-ex.observers.append(FileStorageObserver('experiments/FSS_Prediction'))
+ex.observers.append(FileStorageObserver("experiments/FSS_Prediction"))
 
 
 @ex.config
@@ -85,29 +87,31 @@ def cfg():
     ifa_use_fdm = True  # Apply FDM to features before IFA (parity with training)
 
     # Merge CLI-accessible parameters into the main config dictionary
-    config.update({
-        "checkpoint_path": checkpoint_path,
-        "model_name": model_name,
-        "method": method,
-        "dataset": dataset,
-        "number_of_shots": nb_shots,
-        "input_size": input_size,
-        "dino_version": dino_version,
-        "dinov2_size": dinov2_size,
-        "dinov3_size": dinov3_size,
-        "dinov3_weights_path": dinov3_weights_path,
-        "dinov3_rope_dtype": dinov3_rope_dtype,
-        # IFA prediction options (inference-only)
-        "use_ifa": use_ifa,
-        "ifa_iters": ifa_iters,
-        "ifa_refine": ifa_refine,
-        "ifa_alpha": ifa_alpha,
-        "ifa_ms_weights": ifa_ms_weights,
-        "ifa_temp": ifa_temp,
-        "ifa_fg_thresh": ifa_fg_thresh,
-        "ifa_bg_thresh": ifa_bg_thresh,
-        "ifa_use_fdm": ifa_use_fdm,
-    })
+    config.update(
+        {
+            "checkpoint_path": checkpoint_path,
+            "model_name": model_name,
+            "method": method,
+            "dataset": dataset,
+            "number_of_shots": nb_shots,
+            "input_size": input_size,
+            "dino_version": dino_version,
+            "dinov2_size": dinov2_size,
+            "dinov3_size": dinov3_size,
+            "dinov3_weights_path": dinov3_weights_path,
+            "dinov3_rope_dtype": dinov3_rope_dtype,
+            # IFA prediction options (inference-only)
+            "use_ifa": use_ifa,
+            "ifa_iters": ifa_iters,
+            "ifa_refine": ifa_refine,
+            "ifa_alpha": ifa_alpha,
+            "ifa_ms_weights": ifa_ms_weights,
+            "ifa_temp": ifa_temp,
+            "ifa_fg_thresh": ifa_fg_thresh,
+            "ifa_bg_thresh": ifa_bg_thresh,
+            "ifa_use_fdm": ifa_use_fdm,
+        }
+    )
 
 
 # --- Color Palette Definition ---
@@ -152,7 +156,7 @@ def predict_and_visualize(
 
         image = image.to(device)
         output = model(image)
-        output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
+        output = torch.nn.functional.interpolate(output, size=target.shape[-2:], mode="bilinear", align_corners=False)
 
         # Optional IFA enhancement (inference-time)
         if base_config.get("use_ifa", False) and base_config["method"] in ("linear", "multilayer"):
@@ -172,9 +176,9 @@ def predict_and_visualize(
         prediction = torch.argmax(output, 1).squeeze(0).cpu().numpy().astype(np.uint8)
 
         # --- Visualization ---
-        pred_image = Image.fromarray(prediction, mode='P')
+        pred_image = Image.fromarray(prediction, mode="P")
         pred_image.putpalette(COLOR_PALETTE.flatten())
-        pred_image = pred_image.convert('RGB')
+        pred_image = pred_image.convert("RGB")
 
         # --- Save the Result and Add as Artifact ---
         base_name = os.path.basename(image_path)
@@ -200,7 +204,7 @@ def main(_run, config: Dict[str, Any]):
         raise ValueError("A `checkpoint_path` must be provided. Ex: `with checkpoint_path='path/to/model.pth'`")
 
     # --- Setup ---
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_dir = _run.observers[0].dir  # Use the Sacred run directory for output
     print(f"Using device: {device}")
     print(f"Predicting with model from: {config['checkpoint_path']}")
@@ -267,12 +271,21 @@ def main(_run, config: Dict[str, Any]):
             dinov3_rope_dtype=effective_config.get("dinov3_rope_dtype", "bf16"),
             encoder_adapters=effective_config.get("encoder_adapters", "none"),
             # FDM flags
-            fdm_enable_apm=(effective_config.get("fdm", {}).get("enable_apm", False)
-                            if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_apm", False)),
-            fdm_apm_mode=(effective_config.get("fdm", {}).get("apm_mode", effective_config.get("fdm_apm_mode", "S"))
-                          if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_apm_mode", "S")),
-            fdm_enable_acpa=(effective_config.get("fdm", {}).get("enable_acpa", False)
-                             if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_acpa", False)),
+            fdm_enable_apm=(
+                effective_config.get("fdm", {}).get("enable_apm", False)
+                if isinstance(effective_config.get("fdm", {}), dict)
+                else effective_config.get("fdm_enable_apm", False)
+            ),
+            fdm_apm_mode=(
+                effective_config.get("fdm", {}).get("apm_mode", effective_config.get("fdm_apm_mode", "S"))
+                if isinstance(effective_config.get("fdm", {}), dict)
+                else effective_config.get("fdm_apm_mode", "S")
+            ),
+            fdm_enable_acpa=(
+                effective_config.get("fdm", {}).get("enable_acpa", False)
+                if isinstance(effective_config.get("fdm", {}), dict)
+                else effective_config.get("fdm_enable_acpa", False)
+            ),
         )
     else:
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")

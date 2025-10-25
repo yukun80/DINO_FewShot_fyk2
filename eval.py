@@ -11,12 +11,7 @@ Purpose:
 
 --- Example Usage ---
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/2/best_model.pth' nb_shots=10
-
-python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov3_multilayer/best_model.pth' nb_shots=20
-
-# IFA
-python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm_5shot/best_model.pth' nb_shots=45 use_ifa=True ifa_iters=3 ifa_refine=True
+python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+svf+IFA+FDM_9shot_mIoU-81.97/best_model.pth'
 
 - The `model_path` is required.
 - Other parameters (`method`, `dataset`, `input_size`, etc.) should match the
@@ -84,29 +79,31 @@ def cfg():
     ifa_use_fdm = True  # Apply FDM to features before IFA (parity with training)
 
     # Merge CLI-accessible parameters into the main config dictionary
-    config.update({
-        "checkpoint_path": checkpoint_path,
-        "model_name": model_name,
-        "method": method,
-        "dataset": dataset,
-        "number_of_shots": nb_shots,
-        "input_size": input_size,
-        "dino_version": dino_version,
-        "dinov2_size": dinov2_size,
-        "dinov3_size": dinov3_size,
-        "dinov3_weights_path": dinov3_weights_path,
-        "dinov3_rope_dtype": dinov3_rope_dtype,
-        # IFA evaluation options (inference-only)
-        "use_ifa": use_ifa,
-        "ifa_iters": ifa_iters,
-        "ifa_refine": ifa_refine,
-        "ifa_alpha": ifa_alpha,
-        "ifa_ms_weights": ifa_ms_weights,
-        "ifa_temp": ifa_temp,
-        "ifa_fg_thresh": ifa_fg_thresh,
-        "ifa_bg_thresh": ifa_bg_thresh,
-        "ifa_use_fdm": ifa_use_fdm,
-    })
+    config.update(
+        {
+            "checkpoint_path": checkpoint_path,
+            "model_name": model_name,
+            "method": method,
+            "dataset": dataset,
+            "number_of_shots": nb_shots,
+            "input_size": input_size,
+            "dino_version": dino_version,
+            "dinov2_size": dinov2_size,
+            "dinov3_size": dinov3_size,
+            "dinov3_weights_path": dinov3_weights_path,
+            "dinov3_rope_dtype": dinov3_rope_dtype,
+            # IFA evaluation options (inference-only)
+            "use_ifa": use_ifa,
+            "ifa_iters": ifa_iters,
+            "ifa_refine": ifa_refine,
+            "ifa_alpha": ifa_alpha,
+            "ifa_ms_weights": ifa_ms_weights,
+            "ifa_temp": ifa_temp,
+            "ifa_fg_thresh": ifa_fg_thresh,
+            "ifa_bg_thresh": ifa_bg_thresh,
+            "ifa_use_fdm": ifa_use_fdm,
+        }
+    )
 
 
 class Metrics:
@@ -188,7 +185,11 @@ def evaluate(
     """
     model.eval()
     metrics_base = Metrics(num_classes)
-    metrics_ifa = Metrics(num_classes) if (base_config.get("use_ifa", False) and base_config["method"] in ("linear", "multilayer")) else None
+    metrics_ifa = (
+        Metrics(num_classes)
+        if (base_config.get("use_ifa", False) and base_config["method"] in ("linear", "multilayer"))
+        else None
+    )
 
     print("Starting evaluation...")
     for image, target, _ in data_loader:
@@ -321,12 +322,21 @@ def main(_run, config: Dict[str, Any]):
             dinov3_rope_dtype=effective_config.get("dinov3_rope_dtype", "bf16"),
             encoder_adapters=effective_config.get("encoder_adapters", "none"),
             # FDM flags
-            fdm_enable_apm=(effective_config.get("fdm", {}).get("enable_apm", False)
-                            if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_apm", False)),
-            fdm_apm_mode=(effective_config.get("fdm", {}).get("apm_mode", "S")
-                          if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_apm_mode", "S")),
-            fdm_enable_acpa=(effective_config.get("fdm", {}).get("enable_acpa", False)
-                             if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_acpa", False)),
+            fdm_enable_apm=(
+                effective_config.get("fdm", {}).get("enable_apm", False)
+                if isinstance(effective_config.get("fdm", {}), dict)
+                else effective_config.get("fdm_enable_apm", False)
+            ),
+            fdm_apm_mode=(
+                effective_config.get("fdm", {}).get("apm_mode", "S")
+                if isinstance(effective_config.get("fdm", {}), dict)
+                else effective_config.get("fdm_apm_mode", "S")
+            ),
+            fdm_enable_acpa=(
+                effective_config.get("fdm", {}).get("enable_acpa", False)
+                if isinstance(effective_config.get("fdm", {}), dict)
+                else effective_config.get("fdm_enable_acpa", False)
+            ),
         )
     else:
         raise NotImplementedError(f"Model '{effective_config['model_name']}' is not supported.")
@@ -372,7 +382,9 @@ def main(_run, config: Dict[str, Any]):
         support_pack = {"feats_s_ms": feats_s_ms, "masks_s": support_msks}
 
     # --- Run Evaluation ---
-    computed_metrics = evaluate(model, val_loader, device, effective_config["num_classes"], effective_config, support_pack)
+    computed_metrics = evaluate(
+        model, val_loader, device, effective_config["num_classes"], effective_config, support_pack
+    )
 
     # --- Log Metrics and Display Results ---
     print("\n" + "=" * 50)
