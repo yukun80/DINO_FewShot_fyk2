@@ -9,9 +9,9 @@
 - Pretrained weights: `pretrain/` (DINOv2/DINOv3 checkpoints).
 - Experiment outputs: created under `experiments/` by Sacred; keep out of git.
   - Sacred controls run directories; YAML has no `save_dir`.
- - IFA (inference-time) helpers:
-   - `modules/module_IFA/ifa_head.py`: channel‑agnostic, multi‑iteration IFA/BFP/SSP head (inference‑only).
-   - `utils/ifa.py`: shared helpers for encoder feature extraction, optional FDM-on-features, and IFA inference.
+ - IFA modules:
+   - `modules/module_IFA/ifa_head.py`: channel‑agnostic, multi‑iteration IFA/BFP/SSP head（训练与推理均可调用）。
+   - `utils/ifa.py`: 编码器特征提取、可选的 FDM-on-features、公用 IFA 入口（`run_ifa_inference` 与 `run_ifa_training_logits`）。
 
 ## Build, Test, and Development Commands
 - Setup (recommended venv):
@@ -19,10 +19,10 @@
   - `pip install -r requirements.txt`
 - Generate splits (example):
   - `python -m datasets.generate_disaster_splits --path ../_datasets/Exp_Disaster_Few-Shot --shots 10 --query 257`
-- Train (example, 10-shot DINOv2 linear):
-  - `python3 train.py with method=linear dataset=disaster nb_shots=10 lr=0.01 run_id=1`
-- Train (example, 20-shot DINOv3 multilayer):
-  - `python3 train.py with method=multilayer dataset=disaster nb_shots=20 dino_version=3 dinov3_size=base run_id=1`
+- Train（YAML 驱动的最简命令）:
+  - `python3 train.py with run_id=1`
+- Train（需要时从 CLI 覆盖关键项）:
+  - `python3 train.py with method=multilayer encoder_adapters=lora use_ifa_train=True ifa_alpha=0.3 run_id=1`
 - Evaluate (requires checkpoint):
   - `python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=10`
 - Predict (save masks as artifacts):
@@ -44,12 +44,13 @@
   - Shapes are preserved; decoders (linear/DPT) require no changes.
   - Code points: see `models/backbones/dino.py` around the decoder paths.
 
-## IFA Inference Enhancement (Route A)
+## IFA Integration（Training + Inference）
 - Purpose: Optional, training‑free enhancement that iteratively refines foreground/background prototypes (BFP/SSP) on encoder features to improve cross‑domain few‑shot segmentation.
-- Where: Integrated into both `predict.py` and `eval.py`. Enabled via Sacred CLI keys (declared in `@ex.config`).
+- Inference: Integrated into `predict.py` and `eval.py`. Enabled via Sacred keys.
+- Training: 可选并行分支，融合监督：CE(main) + λ_main·CE(fused) + λ_aux·CE(ifa)。
 - Support set for IFA:
   - Uses the training split (`train_split` / “support”) from your split file.
-  - K is taken from `nb_shots` and the first K samples are used as supports; their features are cached once and reused for all queries.
+  - K 取自 `number_of_shots`。训练可用 `ifa_train_support_k` 限制每迭代参与的支持数（≤K）。
 - Multi‑iteration + refine:
   - `ifa_iters` controls the number of BFP iterations (default 3).
   - `ifa_refine=True` enables an extra refine step in the first iteration (as in the original IFA).
@@ -61,10 +62,9 @@
   - FDM is applied only if the model actually has APM/ACPA enabled; otherwise it is skipped.
 - Logit fusion with the trained decoder output:
   - Final logits = `(1‑ifa_alpha) * base_logits + ifa_alpha * ifa_logits` (default `ifa_alpha=0.3`).
-- Hyper‑parameters (CLI keys):
-  - `use_ifa` (bool), `ifa_iters` (int), `ifa_refine` (bool), `ifa_alpha` (float),
-    `ifa_ms_weights` (list[float], multilayer only), `ifa_temp` (float),
-    `ifa_fg_thresh`/`ifa_bg_thresh` (float), `ifa_use_fdm` (bool).
+- Hyper‑parameters（YAML/CLI）:
+  - Inference: `use_ifa`, `ifa_iters`, `ifa_refine`, `ifa_alpha`, `ifa_ms_weights`, `ifa_temp`, `ifa_fg_thresh`, `ifa_bg_thresh`, `ifa_use_fdm`。
+  - Training: `use_ifa_train`, `ifa_loss_w_main`, `ifa_loss_w_aux`, `ifa_train_support_k`（参与支持数），`ifa_detach_support`（支持特征 no_grad 抽取）。
 
 ### Quick Commands
 - Predict with IFA (multilayer example):
@@ -77,7 +77,11 @@ Notes on methods
 - `multilayer`: Uses a SegDINO-aligned DPT decoder with spread layer sampling.
   - Layer selection: 4 evenly spaced intermediate layers (e.g., depth=12 → [2,5,8,11]).
   - Decoder: per-layer 1x1 projection → 3x3 refinement to `features` with BN+GELU → concat → final 1x1.
-  - Applies to both DINOv2 and DINOv3 backbones; backbone forward is computed under no_grad.
+  - Applies to both DINOv2 and DINOv3 backbones；是否 no_grad 由 `encoder_adapters` 决定：`none`→冻结（no_grad），`lora/svf`→可微（仅训练轻量适配层）。
+
+## Encoder Adapters（解耦）
+- `encoder_adapters: {none|lora|svf}` 与解码器类型（`method: linear|multilayer`）解耦。
+- 选择 `lora/svf` 时在 encoder 注入轻量适配器、允许可微前向；选择 `none` 则保持冻结、节省显存。
 
 ## DINOv3 Adaptation
 - Robust checkpoint loading with key normalization and validation.
@@ -103,6 +107,14 @@ Training Stability Tips
 - Optional gradient clipping: set `clip_grad_norm` (e.g., `clip_grad_norm: 1.0`).
 - Mixed precision is disabled; training runs in FP32 to accommodate FFT/phase ops (`mixed_precision: False`).
 - Optimizer config values are parsed robustly, but prefer numeric (non-quoted) values for `lr`, `momentum`, `weight_decay`.
+
+## Memory Tuning
+- Reduce IFA participation:
+  - `ifa_train_support_k`（训练参与的支持数）调低例如 5/10；`ifa_detach_support: true`（默认）以 no_grad 抽取支持特征。
+  - `ifa_iters: 2` 或 `ifa_refine: false`；将 `ifa_ms_weights` 浅层置零如 `[0,0,0,1]`。
+- Lower FDM/encoder cost:
+  - `fdm.apm_mode: "S"` 或临时关闭 `fdm.enable_acpa`。
+  - 使用更小 `input_size` 或更小 DINO 尺寸（`dinov2_size: small`/`dinov3_size: small`）。
 
 ## Coding Style & Naming Conventions
 - Python, 4-space indentation, PEP 8. Prefer type hints where helpful.
@@ -136,3 +148,4 @@ Training Stability Tips
 - For DINOv3, if auto-discovery fails, specify `dinov3_weights_path` explicitly.
 - For DINOv3, you may also set `dinov3_rope_dtype` (default `bf16`) to `{bf16, fp32, fp16}`.
 - Sacred manages output directories; do not add `save_dir` in YAML. Use `checkpoint_path` for eval/predict.
+ - Sacred 使用追踪：新增嵌套键（如 `fdm.apm_mode`）需在捕获函数内显式访问；本工程已在 train/eval/predict 中触碰相关键，避免 ConfigAddedError。

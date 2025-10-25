@@ -237,6 +237,7 @@ def main(_run, config: Dict[str, Any]):
                 "fdm_enable_apm",
                 "fdm_apm_mode",
                 "fdm_enable_acpa",
+                "encoder_adapters",
             ]
             for k in keys_to_copy:
                 if k in train_cfg:
@@ -264,6 +265,7 @@ def main(_run, config: Dict[str, Any]):
             dinov3_size=effective_config.get("dinov3_size", "base"),
             dinov3_weights_path=effective_config.get("dinov3_weights_path", None),
             dinov3_rope_dtype=effective_config.get("dinov3_rope_dtype", "bf16"),
+            encoder_adapters=effective_config.get("encoder_adapters", "none"),
             # FDM flags
             fdm_enable_apm=(effective_config.get("fdm", {}).get("enable_apm", False)
                             if isinstance(effective_config.get("fdm", {}), dict) else effective_config.get("fdm_enable_apm", False)),

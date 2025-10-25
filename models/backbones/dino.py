@@ -229,6 +229,8 @@ class DINO_linear(nn.Module):
                  dinov3_size: str = "base",
                  dinov3_weights_path: Optional[str] = None,
                  dinov3_rope_dtype: str = "bf16",
+                 # Encoder adapters decoupled from decoder type
+                 encoder_adapters: str = "auto",  # {auto|none|lora|svf}
                  # FDM integration flags (single policy)
                  fdm_enable_apm: bool = False,
                  fdm_apm_mode: str = "S",
@@ -243,6 +245,17 @@ class DINO_linear(nn.Module):
         if self.fdm_apm_mode not in ("S", "M"):
             self.fdm_apm_mode = "S"
         self.fdm_enable_acpa = bool(fdm_enable_acpa)
+        # Determine adapter mode
+        enc_adapters = (encoder_adapters or "auto").lower()
+        if enc_adapters not in ("auto", "none", "lora", "svf"):
+            enc_adapters = "auto"
+        # Backward compatibility: if method specified legacy 'lora'/'svf' and adapters=auto, infer from method
+        if enc_adapters == "auto":
+            if method in ("lora", "svf"):
+                enc_adapters = method
+            else:
+                enc_adapters = "none"
+        self.encoder_adapters = enc_adapters
         if self.version == 3:
             self.encoder = create_backbone_dinov3(method, model_repo_path, model_path, dinov3_size, dinov3_weights_path, dinov3_rope_dtype)
             if dinov3_size == 'base':
@@ -266,9 +279,10 @@ class DINO_linear(nn.Module):
         else:
             raise ValueError(f"Unsupported DINO version: {self.version}. Only 2 and 3 are supported.")
 
-        if method == "svf" : 
+        # Inject encoder adapters regardless of decoder type
+        if self.encoder_adapters == "svf":
             self.encoder = resolver(self.encoder)
-        if method == "lora" : 
+        elif self.encoder_adapters == "lora":
             config = LoraConfig(
                 r=16,
                 lora_alpha=16,
@@ -339,12 +353,13 @@ class DINO_linear(nn.Module):
         else:
             raise ValueError(f"Unsupported DINO version: {self.version}. Only 2 and 3 are supported.")
 
-        if self.method in ["linear", "multilayer"] : 
+        # Encoder forward: no_grad only when there are no adapters to train
+        if self.encoder_adapters == "none":
             with torch.no_grad():
-                x = F.interpolate(x, size=[input_dim,input_dim], mode='bilinear', align_corners=False)
+                x = F.interpolate(x, size=[input_dim, input_dim], mode='bilinear', align_corners=False)
                 x = self.encoder(x)
-        else : 
-            x = F.interpolate(x, size=[input_dim,input_dim], mode='bilinear', align_corners=False)
+        else:
+            x = F.interpolate(x, size=[input_dim, input_dim], mode='bilinear', align_corners=False)
             x = self.encoder(x)
         
         if self.method == "multilayer":
