@@ -68,10 +68,14 @@
 
 ### Quick Commands
 - Predict with IFA (multilayer example):
-  - ``python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' method=multilayer nb_shots=10 use_ifa=True ifa_use_fdm=True ifa_iters=3 ifa_refine=True``
+ - ``python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' method=multilayer nb_shots=10 use_ifa=True ifa_use_fdm=True ifa_iters=3 ifa_refine=True``
 - Evaluate with IFA and report deltas (Base vs. IFA):
   - ``python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm/best_model.pth' nb_shots=20 use_ifa=True ifa_use_fdm=True ifa_iters=3 ifa_refine=True``
   - Eval logs both `Base_*` and `IFA_*` metrics and `Delta_*` (e.g., `Delta_mIoU`).
+- Qualitative IFA iteration visualization (entire query split by default):
+  - ``python -m tools.visualize_ifa_iterations with checkpoint_path='experiments/FSS_Training/1/best_model.pth' use_ifa=True``
+  - Panels (RGB, GT, decoder, each IFA iter, fused) are saved under `experiments/FSS_IFAIterViz/<run_id>/ifa_iterations/`. 
+  - CLI knobs: `num_samples` (set `-1` for all queries), `sample_indices`, `max_iters_to_plot`, `save_mask_arrays` (when `True`, `.npz` masks are emitted). Sacred requires `use_ifa`/`ifa_*` keys to be declared; the script already exposes them, so overrides like `ifa_iters=5` are valid.
 
 Notes on methods
 - `multilayer`: Uses a SegDINO-aligned DPT decoder with spread layer sampling.
@@ -131,6 +135,7 @@ Training Stability Tips
  - For IFA eval/predict smoke‑tests:
    - Start with `nb_shots=1` and `use_ifa=True ifa_iters=3 ifa_alpha=0.3`.
    - For multilayer models trained with FDM, keep `ifa_use_fdm=True` to mirror training features.
+  - IFA support caching is centralized in `utils/ifa.build_support_pack`; reuse it instead of duplicating feature extraction loops when you introduce new tools.
 
 ## Commit & Pull Request Guidelines
 - Commits: imperative, present tense; concise summary line (e.g., "Add DINOv2 multilayer support").

@@ -27,14 +27,14 @@ import json
 import yaml
 import torch
 import warnings
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
 
 # --- Project-specific Imports ---
 from utils.train_utils import get_dataset_loaders
 from models.backbones.dino import DINO_linear
-from utils.ifa import extract_encoder_features, run_ifa_inference
+from utils.ifa import build_support_pack, run_ifa_inference
 import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
@@ -354,32 +354,13 @@ def main(_run, config: Dict[str, Any]):
     # Build support cache if IFA is enabled
     support_pack: Dict[str, Any] = {}
     if effective_config.get("use_ifa", False) and effective_config["method"] in ("linear", "multilayer"):
-        k = int(effective_config.get("number_of_shots", 1))
-        support_imgs = []
-        support_msks = []
-        for idx in range(min(k, len(train_set))):
-            img_s, msk_s, _ = train_set[idx]
-            support_imgs.append(img_s.unsqueeze(0))
-            support_msks.append(msk_s)
-        if len(support_imgs) == 0:
-            raise RuntimeError("IFA enabled but no support samples found in train_split for evaluation.")
-
-        with torch.no_grad():
-            feats_per_support: List[List[torch.Tensor]] = []
-            for img in support_imgs:
-                feats = extract_encoder_features(
-                    model,
-                    img.to(device),
-                    version=effective_config.get("dino_version", 2),
-                    input_size=effective_config.get("input_size", 512),
-                )
-                feats_per_support.append(feats)
-            num_scales = len(feats_per_support[0])
-            feats_s_ms: List[List[torch.Tensor]] = []
-            for s in range(num_scales):
-                feats_s_ms.append([feats_per_support[k][s] for k in range(len(feats_per_support))])
-
-        support_pack = {"feats_s_ms": feats_s_ms, "masks_s": support_msks}
+        support_pack = build_support_pack(
+            model=model,
+            support_dataset=train_set,
+            config=effective_config,
+            device=device,
+            max_support=effective_config.get("number_of_shots", 1),
+        )
 
     # --- Run Evaluation ---
     computed_metrics = evaluate(

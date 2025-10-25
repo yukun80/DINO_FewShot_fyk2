@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Sequence, Optional
+from typing import Sequence, Optional, Tuple
 
 
 class DPTDecoder(nn.Module):
@@ -55,10 +55,9 @@ class DPTDecoder(nn.Module):
         # Final fusion and classification
         self.output_conv = nn.Conv2d(features * 4, num_classes, kernel_size=1, stride=1, padding=0)
 
-    def forward(self, feats: Sequence[torch.Tensor]) -> torch.Tensor:
+    def _forward_common(self, feats: Sequence[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         assert isinstance(feats, (list, tuple)) and len(feats) == 4, "Expect 4 feature maps"
 
-        # Per-layer projection + refinement
         proc = []
         for i, x in enumerate(feats):
             x = self.projects[i](x)
@@ -68,7 +67,6 @@ class DPTDecoder(nn.Module):
             x = self.act(x)
             proc.append(x)
 
-        # Align to the first layer's spatial size for robustness
         target_hw = proc[0].shape[-2:]
         proc = [
             p if p.shape[-2:] == target_hw else F.interpolate(p, size=target_hw, mode="bilinear", align_corners=True)
@@ -76,5 +74,16 @@ class DPTDecoder(nn.Module):
         ]
 
         fused = torch.cat(proc, dim=1)
-        out = self.output_conv(fused)
-        return out
+        logits = self.output_conv(fused)
+        return logits, fused
+
+    def forward(self, feats: Sequence[torch.Tensor]) -> torch.Tensor:
+        logits, _ = self._forward_common(feats)
+        return logits
+
+    def forward_with_fused(self, feats: Sequence[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass that also returns the fused decoder representation prior to the final 1x1 conv.
+        Useful for visualization/debugging without duplicating decoder work.
+        """
+        return self._forward_common(feats)

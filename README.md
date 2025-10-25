@@ -89,6 +89,16 @@ python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.p
 ```
 - The resulting images will be saved as artifacts in a new run under `experiments/FSS_Prediction/`.
 
+### Visualizing IFA Iterations
+To understand how the IFA branch refines predictions over multiple iterations, run:
+```bash
+python -m tools.visualize_ifa_iterations with \
+    checkpoint_path='experiments/FSS_Training/1/best_model.pth' \
+    num_samples=4 use_ifa=True ifa_iters=3
+```
+- Saves side-by-side panels (RGB, GT, decoder, per-iteration IFA, fused) to `experiments/FSS_IFAIterViz/<run_id>/ifa_iterations/`.
+- Set `sample_indices=[...]` to inspect fixed queries, `max_iters_to_plot` to clip iterations, and `save_mask_arrays=True` to also export `.npz` files containing the raw masks for each step.
+
 **Available Options:**
 - **Scripts**: `train.py`, `eval.py`, `predict.py`
 - **Methods**: `linear`, `multilayer`, `svf`, `lora`.

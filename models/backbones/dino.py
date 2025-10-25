@@ -345,44 +345,82 @@ class DINO_linear(nn.Module):
         # Trigger (re)initialization if needed
         self.apm._ensure_initialized(feat)
 
-    def forward(self, x): 
+    def _resize_to_backbone(self, x: torch.Tensor) -> torch.Tensor:
         if self.version == 3:
             input_dim = int(self.input_size/16)*16
         elif self.version == 2 : 
             input_dim = int(self.input_size/14)*14
         else:
             raise ValueError(f"Unsupported DINO version: {self.version}. Only 2 and 3 are supported.")
+        return F.interpolate(x, size=[input_dim, input_dim], mode='bilinear', align_corners=False)
 
-        # Encoder forward: no_grad only when there are no adapters to train
-        if self.encoder_adapters == "none":
+    def _forward_encoder(self, x: torch.Tensor, keep_encoder_grad: bool = False) -> List[torch.Tensor]:
+        resized = self._resize_to_backbone(x)
+        if self.encoder_adapters == "none" and not keep_encoder_grad:
             with torch.no_grad():
-                x = F.interpolate(x, size=[input_dim, input_dim], mode='bilinear', align_corners=False)
-                x = self.encoder(x)
+                feats = self.encoder(resized)
         else:
-            x = F.interpolate(x, size=[input_dim, input_dim], mode='bilinear', align_corners=False)
-            x = self.encoder(x)
-        
+            feats = self.encoder(resized)
+        feats_list = list(feats) if isinstance(feats, (list, tuple)) else [feats]
+        return feats_list
+
+    def _apply_fdm_multilayer(self, feats: Sequence[torch.Tensor]) -> List[torch.Tensor]:
+        out = list(feats)
+        if (self.apm is None) and (self.acpa is None):
+            return out
+        n = len(out)
+        apply_ids = list(range(max(0, n - 2), n))
+        for idx in apply_ids:
+            tensor = out[idx]
+            if self.apm is not None:
+                self._ensure_apm_shape(tensor)
+                tensor = self.apm(tensor)
+            if self.acpa is not None:
+                tensor = self.acpa(tensor)
+            out[idx] = tensor
+        return out
+
+    def _apply_fdm_linear(self, feat: torch.Tensor) -> torch.Tensor:
+        out = feat
+        if self.apm is not None:
+            self._ensure_apm_shape(out)
+            out = self.apm(out)
+        if self.acpa is not None:
+            out = self.acpa(out)
+        return out
+
+    def forward(self, x):
+        feats = self._forward_encoder(x, keep_encoder_grad=False)
         if self.method == "multilayer":
-            feats = list(x) if isinstance(x, (list, tuple)) else [x]
-            # Apply FDM on selected layers if enabled
-            if (self.apm is not None) or (self.acpa is not None):
-                n = len(feats)
-                # Single policy: apply only on the deeper two features (last two indices)
-                apply_ids = list(range(max(0, n - 2), n))
-                for i in apply_ids:
-                    if self.apm is not None:
-                        self._ensure_apm_shape(feats[i])
-                        feats[i] = self.apm(feats[i])
-                    if self.acpa is not None:
-                        feats[i] = self.acpa(feats[i])
+            feats = self._apply_fdm_multilayer(feats)
             return self.decoder(feats)
         else:
-            x = torch.cat(x, dim=1)
-            # Apply FDM for linear/svf path prior to BN/Conv
-            if self.apm is not None:
-                self._ensure_apm_shape(x)
-                x = self.apm(x)
-            if self.acpa is not None:
-                x = self.acpa(x)
-            x = self.bn(x)
-            return self.decoder(x)
+            merged = torch.cat(feats, dim=1)
+            merged = self._apply_fdm_linear(merged)
+            merged = self.bn(merged)
+            return self.decoder(merged)
+
+    def forward_with_feature_maps(self, x: torch.Tensor, keep_encoder_grad: bool = False):
+        """
+        Extended forward that surfaces intermediate feature maps for visualization.
+
+        Returns:
+            logits: decoder logits [B, num_classes, H, W]
+            stage1: backbone feature map before FDM (deepest layer for multilayer)
+            stage2: feature map after FDM (same spatial scale)
+            stage3: decoder input feature (BN output for linear, fused tensor for multilayer)
+        """
+        feats_raw = self._forward_encoder(x, keep_encoder_grad=keep_encoder_grad)
+        if self.method == "multilayer":
+            feats_fdm = self._apply_fdm_multilayer(feats_raw)
+            logits, fused = self.decoder.forward_with_fused(feats_fdm)
+            stage1 = feats_raw[-1]
+            stage2 = feats_fdm[-1]
+            stage3 = fused
+            return logits, stage1, stage2, stage3
+        else:
+            stage1 = torch.cat(feats_raw, dim=1)
+            stage2 = self._apply_fdm_linear(stage1)
+            stage3 = self.bn(stage2)
+            logits = self.decoder(stage3)
+            return logits, stage1, stage2, stage3

@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
-from typing import List, Dict, Any, Tuple
+from torch.utils.data import Dataset
+from typing import List, Dict, Any, Tuple, Optional
 
 from models.backbones.dino import DINO_linear
 from modules.module_IFA.ifa_head import IFAHead
@@ -86,10 +87,12 @@ def run_ifa_inference(
     support_pack: Dict[str, Any],
     out_size: Tuple[int, int],
     use_fdm_on_feats: bool = False,
-) -> torch.Tensor:
+    capture_history: bool = False,
+) -> torch.Tensor | Tuple[torch.Tensor, Dict[str, Any]]:
     """
     Run IFA on top of encoder features with optional FDM pre-processing of features.
-    Returns logits tensor [1, 2, out_h, out_w].
+    Returns logits tensor [1, 2, out_h, out_w]. When `capture_history=True`, also
+    returns a dictionary containing per-iteration logits.
     """
     # Build IFA head
     ifa_head = IFAHead(
@@ -135,8 +138,35 @@ def run_ifa_inference(
     if method == "linear":
         last_q = feats_q_ms[-1]
         last_s = [feats_s_ms[-1][k] for k in range(len(masks_s))]
-        logits = ifa_head.run_single_scale(last_s, masks_s, last_q)
-        logits = F.interpolate(logits, size=out_size, mode="bilinear", align_corners=False)
+        result = ifa_head.run_single_scale(
+            last_s,
+            masks_s,
+            last_q,
+            collect_history=capture_history,
+        )
+        if capture_history:
+            logits_raw, history = result  # type: ignore[misc]
+        else:
+            logits_raw = result  # type: ignore[assignment]
+            history = None
+
+        logits = F.interpolate(logits_raw, size=out_size, mode="bilinear", align_corners=False)
+        if capture_history and history is not None:
+            fused_hist = [
+                F.interpolate(h, size=out_size, mode="bilinear", align_corners=False) for h in history
+            ]
+            history_payload = {
+                "per_scale": [
+                    {
+                        "scale_index": len(feats_q_ms) - 1,
+                        "spatial_size": list(last_q.shape[-2:]),
+                        "final_logits": logits_raw,
+                        "iter_logits": history,
+                    }
+                ],
+                "fused_iter_logits": fused_hist,
+            }
+            return logits, history_payload
         return logits
     elif method == "multilayer":
         ms_weights = [float(w) for w in ifa_cfg.get("ifa_ms_weights", [0.1, 0.2, 0.3, 0.4])]
@@ -150,14 +180,19 @@ def run_ifa_inference(
             ms_weights = [ms_weights[i] for i in idxs]
         feats_q_ms_sel = [feats_q_ms[i] for i in idxs]
         feats_s_ms_sel = [feats_s_ms[i] for i in idxs]
-        logits = ifa_head.run_multi_scale(
+        result = ifa_head.run_multi_scale(
             feats_s_ms=feats_s_ms_sel,
             masks_s=masks_s,
             feats_q_ms=feats_q_ms_sel,
             out_size=out_size,
             weights=ms_weights,
+            collect_history=capture_history,
         )
-        return logits
+        if capture_history:
+            logits, history_payload = result  # type: ignore[misc]
+            return logits, history_payload
+        else:
+            return result  # type: ignore[return-value]
     else:
         raise NotImplementedError(f"IFA inference not supported for method '{method}'.")
 
@@ -232,3 +267,70 @@ def run_ifa_training_logits(
         return logits
     else:
         raise NotImplementedError(f"IFA training not supported for method '{method}'.")
+
+
+def build_support_pack(
+    model: DINO_linear,
+    support_dataset: Dataset,
+    config: Dict[str, Any],
+    device: torch.device,
+    max_support: Optional[int] = None,
+    support_indices: Optional[List[int]] = None,
+) -> Dict[str, Any]:
+    """
+    Pre-compute encoder features for the support set (K shots) that will be reused by IFA.
+    Returns a dictionary with the same structure expected by `run_ifa_inference`.
+    """
+    num_shots = int(config.get("number_of_shots", 1))
+    support_cap = int(config.get("ifa_train_support_k", 0) or num_shots)
+    effective_cap = num_shots if num_shots > 0 else 1
+    effective_cap = min(effective_cap, support_cap if support_cap > 0 else num_shots)
+    if max_support is not None:
+        effective_cap = min(effective_cap, int(max_support))
+
+    dataset_len = len(support_dataset)
+    if dataset_len == 0:
+        raise RuntimeError("Support dataset is empty; cannot build support cache.")
+
+    if support_indices:
+        idxs = [idx for idx in support_indices if 0 <= idx < dataset_len]
+        if not idxs:
+            raise ValueError("Provided support_indices are out of range.")
+    else:
+        idxs = list(range(min(effective_cap, dataset_len)))
+
+    support_imgs: List[torch.Tensor] = []
+    support_msks: List[torch.Tensor] = []
+    gathered_indices: List[int] = []
+    for idx in idxs:
+        img_s, msk_s, _ = support_dataset[idx]
+        if img_s.numel() == 0:
+            continue
+        support_imgs.append(img_s.unsqueeze(0))
+        support_msks.append(msk_s)
+        gathered_indices.append(idx)
+
+    if len(support_imgs) == 0:
+        raise RuntimeError("Failed to collect support samples for IFA.")
+
+    with torch.no_grad():
+        feats_per_support: List[List[torch.Tensor]] = []
+        for img in support_imgs:
+            feats = extract_encoder_features(
+                model,
+                img.to(device),
+                version=int(config.get("dino_version", 2)),
+                input_size=int(config.get("input_size", 512)),
+            )
+            feats_per_support.append(feats)
+
+    num_scales = len(feats_per_support[0])
+    feats_s_ms: List[List[torch.Tensor]] = []
+    for scale_idx in range(num_scales):
+        feats_s_ms.append([feats_per_support[k][scale_idx] for k in range(len(feats_per_support))])
+
+    return {
+        "feats_s_ms": feats_s_ms,
+        "masks_s": support_msks,
+        "indices": gathered_indices,
+    }
