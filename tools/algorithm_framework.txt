@@ -1,0 +1,60 @@
+Few-Shot Segmentation Architecture (run_id=1)
+=============================================
+Legend: 512² = 512×512, C = 1024, α = 0.3, τ = 10.0
+
+```
+                           DisasterDataset
+                (support split K=20, query split batch=1)
+                                 |
+               ------------------------------------------------
+               |                                              |
+        Support Stream                                   Query Stream
+        (per shot)                                       (per sample)
+        -------------                                    ------------
+        RGB_s^k ∈ ℝ^{1×3×512²}                           RGB_q ∈ ℝ^{1×3×512²}
+        Mask_s^k ∈ ℤ^{512²}                              ───────────────┐
+        │                                             shared weights   │
+        └──DINOv3-Large/16 backbone + SVF adapters (models/backbones/dino.py)
+             depth=24 → layers {2,8,14,23} → multi-scale features
+                     F_s^k[i], F_q[i] ∈ ℝ^{1×C×32×32}  for i = 0..3
+             optional: precise BN disabled, mixed precision False
+        ──────────────────────────────────────────────────────────────────
+        FDM (modules/module_FDM): APM mode "M" → ACPA on i ∈ {2,3}
+                F̃_s^k[i] = ACPA(APM(F_s^k[i]))
+                F̃_q[i]   = ACPA(APM(F_q[i]))
+        ──────────────────────────────────────────────────────────────────
+                     |                                   |
+                     |                                   |
+ Support cache ← utils/ifa.build_support_pack            |
+   stores {F̃_s^k[i]} per scale + masks_s^k (detached)   |
+                     |                                   |
+                     v                                   v
+        +----------------------+            +---------------------------+
+        | IFA Head (modules/   |            | Decoder (multilayer)      |
+        | module_IFA/ifa_head) |            | models/decoders/dpt.DPT   |
+        | iters=3, refine=True |            |                           |
+        +----------------------+            +---------------------------+
+        Inputs: {F̃_s^k[i]}, masks_s^k      Inputs: {F̃_q[0..3]}
+                {F̃_q[i]}, weights         - 1×1 proj → [192,384,768,1024]
+                [0,0,0.4,0.6]              - 3×3 conv + BN → 128 ch
+        Process:                           - Upsample to 32×32, concat
+          masked pooling → prototypes      - 1×1 conv → L_base ∈ ℝ^{1×2×32×32}
+          cosine logits → SSP/BFP
+          iterate (τ=10, fg=0.7, bg=0.6) → L_IFA ∈ ℝ^{1×2×32×32}
+
+                L_IFA upsampled (bilinear)      L_base
+                     |                              |
+                     └────────────┬─────────────────┘
+                                  v
+                       Logit Fusion & Losses
+                       ---------------------
+                       L_fused = (1-α)·L_base + α·L_IFA  (α=0.3)
+                       Main CE: upsampled L_base vs query mask
+                       Fused CE: λ_main=0.3
+                       IFA CE: λ_aux=0.0 (disabled)
+
+                              ↓
+                  Segmentation masks (argmax L_fused↑512²)
+                  Metrics via ConfusionMatrix (num_classes=2)
+                  Sacred observer → experiments/FSS_Training/1
+```

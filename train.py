@@ -15,10 +15,6 @@ It has been refactored to use Sacred for robust experiment tracking and manageme
       python3 train.py with method=multilayer nb_shots=9 dino_version=2 dinov2_size=base run_id=1
       python3 train.py with method=multilayer nb_shots=45 dino_version=2 dinov2_size=base run_id=1
       
-      python3 train.py with method=multilayer nb_shots=20 dino_version=3 dinov3_size=base run_id=3
-
-    - **SVF (10-shot, LR=0.0001, Run 1, requires a pre-trained linear decoder):**
-      python3 train.py with method=svf nb_shots=10 lr=0.0001 run_id=1
       
     - **IFA**
     python3 train.py with run_id=1

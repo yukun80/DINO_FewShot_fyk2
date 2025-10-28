@@ -10,5 +10,6 @@ ARTICLE.md
 experiments/
 pretrain/
 # modules/
-# modules/module_segdino/
-# modules/module_IFA
+modules/module_segdino/
+modules/module_IFA
+tools/fig/

@@ -108,6 +108,17 @@ python -m tools.visualize_ifa_iterations with \
   - DINOv3: `dinov3_size ∈ {small, base, large}`, optional `dinov3_weights_path`
 - **Datasets**: The framework is currently optimized for the `disaster` dataset.
 
+### t-SNE Feature Embeddings
+For a qualitative look at how query samples spread in feature space, use the dedicated t-SNE visualizer (requires `scikit-learn`):
+```bash
+python -m tools.visualize_tsne with \
+    checkpoint_path='experiments/FSS_Training/1/best_model.pth' \
+    feature_stage='decoder_input' sample_mode='pixel' pixels_per_image=1024 max_points=5000 random_seed=0
+```
+- Supports multiple feature stages (`backbone_raw`, `decoder_input`, `ifa_logits`, etc.) and both image-level or pixel-level sampling.
+- The `max_points` cap keeps t-SNE memory manageable; increase cautiously if you have plenty of RAM.
+- Saves scatter plots and the underlying embeddings in `experiments/FSS_TSNEViz/<run_id>/tsne_plots/`.
+
 ### Frequency Decoupling Modules (FDM)
 The framework optionally integrates a lightweight frequency masker (APM) and a channel phase attention (ACPA) between the backbone and decoders. Configure in `configs/disaster.yaml`:
 

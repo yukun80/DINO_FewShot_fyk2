@@ -13,7 +13,7 @@ Outputs are written under `experiments/FSS_IFAIterViz/<run_id>/ifa_iterations`.
 
 Example:
 python -m tools.visualize_ifa_iterations with \
-    checkpoint_path='experiments/FSS_Training/dinov2_multilayer+svf+IFA+FDM_5shot_mIoU-78/best_model.pth' \
+    checkpoint_path='experiments/FSS_Training/1/best_model.pth' \
     num_samples=-1 use_ifa=True ifa_iters=3
 """
 
@@ -334,7 +334,12 @@ def main(_run, config: Dict[str, Any]):
             )
         )
 
-        fig, axes = plt.subplots(1, len(panels), figsize=(4 * len(panels), 4))
+        fig, axes = plt.subplots(
+            1,
+            len(panels),
+            figsize=(4 * len(panels), 4),
+            gridspec_kw={"wspace": 0.02},
+        )
         if len(panels) == 1:
             axes = [axes]
         for ax, (title, data, _) in zip(axes, panels):
@@ -342,7 +347,8 @@ def main(_run, config: Dict[str, Any]):
             ax.set_title(title, fontsize=10)
             ax.axis("off")
         fig.suptitle(os.path.basename(image_path), fontsize=12)
-        fig.tight_layout()
+        fig.tight_layout(pad=0.5, w_pad=0.2, h_pad=0.4)
+        fig.subplots_adjust(wspace=0.02)
 
         fig_path = os.path.join(output_dir, f"sample_{idx:04d}.png")
         fig.savefig(fig_path, dpi=160, bbox_inches="tight", pad_inches=0.05)

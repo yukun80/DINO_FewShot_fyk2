@@ -5,14 +5,22 @@
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/Askja_Iceland_1024_512.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/Chimanimani_Zimbabwe_7168_2048.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/Kodagu_India_7168_4096.tif",
-            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Jiuzhaigou_China_2048_3072.tif"
+            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Jiuzhaigou_China_2048_3072.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Los_Lagos_Chile_3072_1536.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Osh_Kyrgyzstan_4096_1536.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Taitung_China_0_512.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Tbilisi_Georgia_4096_4096.tif"
         ],
         "labels": [
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Asakura_Japan_4608_2048.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Askja_Iceland_1024_512.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Chimanimani_Zimbabwe_7168_2048.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Kodagu_India_7168_4096.tif",
-            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Jiuzhaigou_China_2048_3072.tif"
+            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Jiuzhaigou_China_2048_3072.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Los_Lagos_Chile_3072_1536.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Osh_Kyrgyzstan_4096_1536.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Taitung_China_0_512.tif",
+            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Tbilisi_Georgia_4096_4096.tif"
         ]
     },
     "query": {

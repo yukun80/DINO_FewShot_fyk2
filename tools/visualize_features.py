@@ -9,7 +9,7 @@ Grad-CAM overlays for three stages:
 
 Results are saved under `experiments/FSS_FeatureViz/<run_id>/feature_viz`.
 
-python -m tools.visualize_features with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+svf+IFA+FDM_9shot_mIoU-81.97/best_model.pth'
+python -m tools.visualize_features with checkpoint_path='experiments/FSS_Training/1/best_model.pth'
 """
 
 import json
