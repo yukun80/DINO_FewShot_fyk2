@@ -47,6 +47,7 @@
     },
     "query": {
         "images": [
+            "../_datasets/Exp_Disaster_Few-Shot/valset/images/Taitung_China_0_512.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/A Luoi_Vietnam_0_1024.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/A Luoi_Vietnam_1536_3072.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/A Luoi_Vietnam_2560_2560.tif",
@@ -273,6 +274,7 @@
             "../_datasets/Exp_Disaster_Few-Shot/valset/images/Tenejapa_Mexico_3584_512.tif"
         ],
         "labels": [
+            "../_datasets/Exp_Disaster_Few-Shot/valset/labels/Taitung_China_0_512.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/A Luoi_Vietnam_0_1024.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/A Luoi_Vietnam_1536_3072.tif",
             "../_datasets/Exp_Disaster_Few-Shot/valset/labels/A Luoi_Vietnam_2560_2560.tif",

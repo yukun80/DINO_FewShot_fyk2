@@ -12,8 +12,15 @@ def extract_encoder_features(
     image: torch.Tensor,
     version: int,
     input_size: int,
+    keep_encoder_grad: Optional[bool] = None,
 ) -> List[torch.Tensor]:
-    """Extract intermediate encoder features as list of [1, C, H, W]."""
+    """
+    Extract intermediate encoder features as list of [1, C, H, W].
+
+    Args:
+        keep_encoder_grad: Optional override of the model's default gradient policy.
+            When None, the DINO backbone decides based on its frozen/trainable state.
+    """
     if version == 3:
         input_dim = int(input_size / 16) * 16
     elif version == 2:
@@ -22,7 +29,7 @@ def extract_encoder_features(
         raise ValueError(f"Unsupported DINO version: {version}")
 
     x = F.interpolate(image, size=[input_dim, input_dim], mode="bilinear", align_corners=False)
-    feats = model.encoder(x)
+    feats = model.encoder_features(x, keep_encoder_grad=keep_encoder_grad)
     feats_list = list(feats) if isinstance(feats, (list, tuple)) else [feats]
     feats_list = [f.contiguous() for f in feats_list]
     return feats_list
@@ -321,6 +328,7 @@ def build_support_pack(
                 img.to(device),
                 version=int(config.get("dino_version", 2)),
                 input_size=int(config.get("input_size", 512)),
+                keep_encoder_grad=False,
             )
             feats_per_support.append(feats)
 

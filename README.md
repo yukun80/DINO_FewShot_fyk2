@@ -134,6 +134,19 @@ Notes:
 - Policy (fixed): linear/svf apply on the final feature; multilayer applies on the deeper two of four features before DPT.
 - Mixed precision (AMP) is disabled in training to accommodate FFT-based ops (set `mixed_precision: False`).
 
+### FDM Feature Hexbins
+To summarize how FDM reshapes backbone activations, generate PCA→HSV hexbin maps:
+```bash
+python -m tools.fdm_feature_hex \
+    --checkpoint_path='experiments/FSS_Training/1/best_model.pth' \
+    --stages stage1 stage2 \
+    --num_samples 4 \
+    --save_projection
+```
+- Stage 1/2 correspond to pre/post FDM tensors gathered via `forward_with_feature_maps`.
+- Each PNG encodes principal-component angle (Hue), energy (Saturation), and third-component brightness (Value).
+- When `--save_projection` is set, the JSON summary also reports PCA variance, HSV statistics, and deltas between stages.
+
 
 ## Acknowledgement
 

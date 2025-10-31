@@ -11,7 +11,7 @@ Purpose:
 
 --- Example Usage ---
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+svf+IFA+FDM_9shot_mIoU-81.97/best_model.pth'
+python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+svf+IFA+FDM_5shot_mIoU-78/best_model.pth'
 
 - The `model_path` is required.
 - Other parameters (`method`, `dataset`, `input_size`, etc.) should match the

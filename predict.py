@@ -17,7 +17,7 @@ Purpose:
 # IFA
 python3 predict.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+fdm_5shot/best_model.pth' nb_shots=45 use_ifa=True ifa_iters=3 ifa_refine=True
 
-python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth'
+python3 predict.py with checkpoint_path='experiments/FSS_Training/shot2/best_model.pth'
 
 - The `model_path` is required.
 - The output directory is managed automatically by Sacred.

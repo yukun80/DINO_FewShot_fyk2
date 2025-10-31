@@ -214,7 +214,7 @@ def create_backbone_dinov3(method: str,
         dino_backbone.get_intermediate_layers,
         n=n,
         reshape=True,
-    )
+        )
     return dino_backbone
 
 class DINO_linear(nn.Module):
@@ -291,10 +291,17 @@ class DINO_linear(nn.Module):
                 bias="none",
             )
             self.encoder = get_peft_model(self.encoder, config)
-        
+
         # Optional FDM modules (initialized lazily for spatial dims)
         self.apm = MaskModule(shape=None) if self.fdm_enable_apm else None
         self.acpa = PhaseAttention(self.in_channels) if self.fdm_enable_acpa else None
+
+        # Encoder freeze policy: with adapters='none' we hard-freeze the backbone.
+        self.encoder_frozen = self.encoder_adapters == "none"
+        if self.encoder_frozen:
+            for param in self.encoder.parameters():
+                param.requires_grad_(False)
+        self._refresh_encoder_grad_policy()
 
         # Decoder selection
         if method == "multilayer":
@@ -354,9 +361,11 @@ class DINO_linear(nn.Module):
             raise ValueError(f"Unsupported DINO version: {self.version}. Only 2 and 3 are supported.")
         return F.interpolate(x, size=[input_dim, input_dim], mode='bilinear', align_corners=False)
 
-    def _forward_encoder(self, x: torch.Tensor, keep_encoder_grad: bool = False) -> List[torch.Tensor]:
+    def _forward_encoder(self, x: torch.Tensor, keep_encoder_grad: Optional[bool] = None) -> List[torch.Tensor]:
         resized = self._resize_to_backbone(x)
-        if self.encoder_adapters == "none" and not keep_encoder_grad:
+        if keep_encoder_grad is None:
+            keep_encoder_grad = bool(getattr(self, "encoder_keep_grad_default", True))
+        if not keep_encoder_grad:
             with torch.no_grad():
                 feats = self.encoder(resized)
         else:
@@ -389,8 +398,12 @@ class DINO_linear(nn.Module):
             out = self.acpa(out)
         return out
 
+    def _refresh_encoder_grad_policy(self) -> None:
+        """Cache whether encoder outputs should keep gradients by default."""
+        self.encoder_keep_grad_default = any(param.requires_grad for param in self.encoder.parameters())
+
     def forward(self, x):
-        feats = self._forward_encoder(x, keep_encoder_grad=False)
+        feats = self._forward_encoder(x, keep_encoder_grad=None)
         if self.method == "multilayer":
             feats = self._apply_fdm_multilayer(feats)
             return self.decoder(feats)
@@ -400,7 +413,7 @@ class DINO_linear(nn.Module):
             merged = self.bn(merged)
             return self.decoder(merged)
 
-    def forward_with_feature_maps(self, x: torch.Tensor, keep_encoder_grad: bool = False):
+    def forward_with_feature_maps(self, x: torch.Tensor, keep_encoder_grad: Optional[bool] = None):
         """
         Extended forward that surfaces intermediate feature maps for visualization.
 
@@ -424,3 +437,10 @@ class DINO_linear(nn.Module):
             stage3 = self.bn(stage2)
             logits = self.decoder(stage3)
             return logits, stage1, stage2, stage3
+
+    def encoder_features(self, x: torch.Tensor, keep_encoder_grad: Optional[bool] = None) -> List[torch.Tensor]:
+        """
+        Public helper to run the ViT encoder while respecting the frozen/trainable policy.
+        Passing keep_encoder_grad overrides the default behaviour.
+        """
+        return self._forward_encoder(x, keep_encoder_grad=keep_encoder_grad)

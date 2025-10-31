@@ -242,23 +242,17 @@ def train_one_epoch(
 
             # Per-scale features for supports: [S][K]
             feats_per_support = []
+            detach_support_feats = bool(config.get("ifa_detach_support", True))
             for img in support_imgs:
-                if config.get("ifa_detach_support", True):
-                    with torch.no_grad():
-                        feats = extract_encoder_features(
-                            model,
-                            img,
-                            version=config.get("dino_version", 2),
-                            input_size=config.get("input_size", 512),
-                        )
-                        feats = [f.detach() for f in feats]
-                else:
-                    feats = extract_encoder_features(
-                        model,
-                        img,
-                        version=config.get("dino_version", 2),
-                        input_size=config.get("input_size", 512),
-                    )
+                feats = extract_encoder_features(
+                    model,
+                    img,
+                    version=config.get("dino_version", 2),
+                    input_size=config.get("input_size", 512),
+                    keep_encoder_grad=not detach_support_feats,
+                )
+                if detach_support_feats:
+                    feats = [f.detach() for f in feats]
                 feats_per_support.append(feats)
             num_scales = len(feats_per_support[0]) if len(feats_per_support) > 0 else 0
             if num_scales > 0:

@@ -12,7 +12,7 @@ from typing import List, Tuple, Dict
 3) JSON 保存格式保持不变（support/query -> images/labels，且路径相对工程根目录）。
 
 用法示例：
-python -m datasets.generate_disaster_splits --path ../_datasets/Exp_Disaster_Few-Shot --shots 1
+python -m datasets.generate_disaster_splits --path ../_datasets/Exp_Disaster_Few-Shot --shots 2
 python -m datasets.generate_disaster_splits --path ../_datasets/Exp_Disaster_Few-Shot --shots 5
 
 说明：
