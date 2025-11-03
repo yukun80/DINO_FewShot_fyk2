@@ -11,10 +11,10 @@ Purpose:
 
 --- Example Usage ---
 
-python3 eval.py with checkpoint_path='experiments/FSS_Training/dinov2_multilayer+svf+IFA+FDM_5shot_mIoU-78/best_model.pth'
+python3 eval.py with checkpoint_path='experiments/FSS_Training/4/best_model.pth'
 
 - The `model_path` is required.
-- Other parameters (`method`, `dataset`, `input_size`, etc.) should match the
+- Other parameters (`dataset`, `input_size`, etc.) should match the
   training configuration of the model being evaluated.
 """
 
@@ -33,7 +33,7 @@ from sacred.observers import FileStorageObserver
 
 # --- Project-specific Imports ---
 from utils.train_utils import get_dataset_loaders
-from models.backbones.dino import DINO_linear
+from models.backbones.dino import DINOMultilayer
 from utils.ifa import build_support_pack, run_ifa_inference
 import torch.nn.functional as F
 
@@ -56,7 +56,10 @@ def cfg():
     # --- Command-line accessible parameters ---
     checkpoint_path = None  # REQUIRED: Path to the trained model .pth file
     model_name = "DINO"
-    method = "linear"
+    legacy_method = config.get("method", "multilayer")
+    if legacy_method not in (None, "multilayer"):
+        raise ValueError(f"Only 'multilayer' method is supported, but the config requested '{legacy_method}'.")
+    method = "multilayer"
     dataset = "disaster"
     nb_shots = 10
     input_size = 512
@@ -185,11 +188,7 @@ def evaluate(
     """
     model.eval()
     metrics_base = Metrics(num_classes)
-    metrics_ifa = (
-        Metrics(num_classes)
-        if (base_config.get("use_ifa", False) and base_config["method"] in ("linear", "multilayer"))
-        else None
-    )
+    metrics_ifa = Metrics(num_classes) if base_config.get("use_ifa", False) else None
 
     print("Starting evaluation...")
     for image, target, _ in data_loader:
@@ -203,7 +202,6 @@ def evaluate(
             logits_ifa = run_ifa_inference(
                 model=model,
                 image=image,
-                method=base_config["method"],
                 version=base_config.get("dino_version", 2),
                 input_size=base_config.get("input_size", 512),
                 ifa_cfg=base_config,
@@ -299,19 +297,21 @@ def main(_run, config: Dict[str, Any]):
                     effective_config[k] = train_cfg[k]
             print(f"Loaded training config from: {train_cfg_path}")
             print(
-                f"Using version={effective_config.get('dino_version', 2)}, method='{effective_config['method']}', "
+                f"Using version={effective_config.get('dino_version', 2)}, decoder='multilayer', "
                 f"dinov2_size='{effective_config.get('dinov2_size', 'base')}', dinov3_size='{effective_config.get('dinov3_size', 'base')}', "
                 f"input_size={effective_config['input_size']}"
             )
+            effective_config["method"] = "multilayer"
         except Exception as e:
             print(f"Warning: failed to read training config at {train_cfg_path}: {e}")
+
+    effective_config["method"] = "multilayer"
 
     # --- Model Initialization and Loading ---
     print("Initializing model...")
     if effective_config["model_name"] == "DINO":
-        model = DINO_linear(
+        model = DINOMultilayer(
             version=effective_config.get("dino_version", 2),
-            method=effective_config["method"],
             num_classes=effective_config["num_classes"],
             input_size=effective_config["input_size"],
             model_repo_path=effective_config["model_repo_path"],
@@ -353,7 +353,7 @@ def main(_run, config: Dict[str, Any]):
 
     # Build support cache if IFA is enabled
     support_pack: Dict[str, Any] = {}
-    if effective_config.get("use_ifa", False) and effective_config["method"] in ("linear", "multilayer"):
+    if effective_config.get("use_ifa", False):
         support_pack = build_support_pack(
             model=model,
             support_dataset=train_set,

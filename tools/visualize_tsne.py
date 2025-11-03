@@ -35,7 +35,7 @@ from sklearn.manifold import TSNE  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 from datasets.disaster import DisasterDataset  # noqa: E402
-from models.backbones.dino import DINO_linear  # noqa: E402
+from models.backbones.dino import DINOMultilayer  # noqa: E402
 from utils.ifa import build_support_pack, run_ifa_inference  # noqa: E402
 
 ex = Experiment("FSS_TSNEViz")
@@ -113,7 +113,6 @@ def _sync_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
             train_cfg = train_meta.get("config", train_meta)
             keys = [
                 "model_name",
-                "method",
                 "dino_version",
                 "dinov2_size",
                 "dinov3_size",
@@ -151,6 +150,7 @@ def _sync_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[TSNEViz] Synced config from training run at {cfg_path}")
         except Exception as exc:
             print(f"[TSNEViz] Warning: failed to read training config at {cfg_path}: {exc}")
+    effective["method"] = "multilayer"
     return effective
 
 
@@ -219,13 +219,17 @@ def _cap_indices_by_points(
     return trimmed, effective_pixels
 
 
-def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINO_linear:
+def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINOMultilayer:
     if config.get("model_name", "DINO") != "DINO":
         raise NotImplementedError("t-SNE visualization currently supports only the DINO backbone.")
 
-    model = DINO_linear(
+    legacy_method = config.get("method", "multilayer")
+    if legacy_method not in (None, "multilayer"):
+        raise ValueError(f"Only 'multilayer' method is supported, but the config requested '{legacy_method}'.")
+    config["method"] = "multilayer"
+
+    model = DINOMultilayer(
         version=config.get("dino_version", 2),
-        method=config["method"],
         num_classes=config["num_classes"],
         input_size=config["input_size"],
         model_repo_path=config["model_repo_path"],
@@ -462,9 +466,6 @@ def main(_run, config: Dict[str, Any]):
         raise ValueError(f"sample_mode must be one of {VALID_SAMPLE_MODES}, got '{sample_mode}'.")
 
     requires_ifa = feature_stage in {"ifa_logits", "decoder_fused"} or feature_stage.startswith("ifa_iter_")
-    supports_ifa = config["method"] in ("linear", "multilayer")
-    if requires_ifa and not supports_ifa:
-        raise ValueError(f"Feature stage '{feature_stage}' requires IFA, but method='{config['method']}' is unsupported.")
 
     seed = int(config.get("random_seed", 0))
     random.seed(seed)
@@ -493,7 +494,7 @@ def main(_run, config: Dict[str, Any]):
 
     support_pack: Dict[str, Any] = {}
     capture_history = feature_stage.startswith("ifa_iter_")
-    need_ifa = supports_ifa and (bool(config.get("use_ifa", False)) or requires_ifa)
+    need_ifa = bool(config.get("use_ifa", False)) or requires_ifa
     if need_ifa:
         train_split = config.get("train_split", "support")
         support_dataset = DisasterDataset(
@@ -537,7 +538,6 @@ def main(_run, config: Dict[str, Any]):
             ifa_result = run_ifa_inference(
                 model=model,
                 image=image,
-                method=config["method"],
                 version=config.get("dino_version", 2),
                 input_size=config.get("input_size", 512),
                 ifa_cfg=config,

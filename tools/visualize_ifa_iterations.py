@@ -35,7 +35,7 @@ from sacred import Experiment  # noqa: E402
 from sacred.observers import FileStorageObserver  # noqa: E402
 
 from datasets.disaster import DisasterDataset  # noqa: E402
-from models.backbones.dino import DINO_linear  # noqa: E402
+from models.backbones.dino import DINOMultilayer  # noqa: E402
 from utils.feature_viz import (  # noqa: E402
     denormalize_to_numpy,
     logits_to_probability_map,
@@ -118,7 +118,6 @@ def _sync_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
             train_cfg = train_meta.get("config", train_meta)
             keys = [
                 "model_name",
-                "method",
                 "dino_version",
                 "dinov2_size",
                 "dinov3_size",
@@ -155,6 +154,7 @@ def _sync_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[IFAIterViz] Synced config from training run at {cfg_path}")
         except Exception as exc:
             print(f"[IFAIterViz] Warning: failed to read training config at {cfg_path}: {exc}")
+    effective["method"] = "multilayer"
     return effective
 
 
@@ -244,13 +244,17 @@ def _make_heatmap_overlay(
     return overlay, prob_map, stats
 
 
-def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINO_linear:
+def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINOMultilayer:
     if config.get("model_name", "DINO") != "DINO":
         raise NotImplementedError("IFA iteration visualization currently supports only the DINO backbone.")
 
-    model = DINO_linear(
+    legacy_method = config.get("method", "multilayer")
+    if legacy_method not in (None, "multilayer"):
+        raise ValueError(f"Only 'multilayer' method is supported, but the config requested '{legacy_method}'.")
+    config["method"] = "multilayer"
+
+    model = DINOMultilayer(
         version=config.get("dino_version", 2),
-        method=config["method"],
         num_classes=config["num_classes"],
         input_size=config["input_size"],
         model_repo_path=config["model_repo_path"],
@@ -293,8 +297,6 @@ def main(_run, config: Dict[str, Any]):
     os.makedirs(output_dir, exist_ok=True)
 
     effective_config = _sync_training_config(config)
-    if effective_config.get("method") not in ("linear", "multilayer"):
-        raise ValueError("IFA visualization is supported for `linear` and `multilayer` methods only.")
     if not effective_config.get("use_ifa", False):
         raise ValueError("Set `use_ifa=True` (either in the checkpoint config or CLI) for IFA visualization.")
 
@@ -371,7 +373,6 @@ def main(_run, config: Dict[str, Any]):
             logits_ifa_with_hist = run_ifa_inference(
                 model=model,
                 image=image_batch,
-                method=effective_config["method"],
                 version=effective_config.get("dino_version", 2),
                 input_size=effective_config.get("input_size", 512),
                 ifa_cfg=effective_config,

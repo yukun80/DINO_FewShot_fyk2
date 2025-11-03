@@ -5,7 +5,7 @@ This script runs a trained checkpoint on selected query samples and produces
 Grad-CAM overlays for three stages:
     1) Raw backbone activations (before APM/ACPA).
     2) Post-FDM activations (after APM+ACPA).
-    3) Decoder input features (BN output for linear / fused DPT tensor for multilayer).
+    3) Decoder fused tensor prior to the classification head.
 
 Results are saved under `experiments/FSS_FeatureViz/<run_id>/feature_viz`.
 
@@ -28,7 +28,7 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 
 from datasets.disaster import DisasterDataset
-from models.backbones.dino import DINO_linear
+from models.backbones.dino import DINOMultilayer
 from utils.feature_viz import compute_grad_cam, denormalize_to_numpy, overlay_heatmap
 
 ex = Experiment("FSS_FeatureViz")
@@ -74,7 +74,6 @@ def _sync_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
             train_cfg = train_meta.get("config", train_meta)
             keys = [
                 "model_name",
-                "method",
                 "dino_version",
                 "dinov2_size",
                 "dinov3_size",
@@ -98,6 +97,7 @@ def _sync_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[FeatureViz] Synced config from training run at {cfg_path}")
         except Exception as exc:
             print(f"[FeatureViz] Warning: failed to read training config at {cfg_path}: {exc}")
+    effective["method"] = "multilayer"
     return effective
 
 
@@ -145,7 +145,7 @@ def _infer_adapter_mode(state_dict: Dict[str, torch.Tensor]) -> str:
     return "none"
 
 
-def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINO_linear:
+def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINOMultilayer:
     if config.get("model_name", "DINO") != "DINO":
         raise NotImplementedError("Feature visualization currently supports only the DINO backbone.")
 
@@ -162,9 +162,13 @@ def _prepare_model(config: Dict[str, Any], device: torch.device) -> DINO_linear:
         )
         cfg_adapter = inferred_adapter
 
-    model = DINO_linear(
+    legacy_method = config.get("method", "multilayer")
+    if legacy_method not in (None, "multilayer"):
+        raise ValueError(f"Only 'multilayer' method is supported, but the config requested '{legacy_method}'.")
+    config["method"] = "multilayer"
+
+    model = DINOMultilayer(
         version=config.get("dino_version", 2),
-        method=config["method"],
         num_classes=config["num_classes"],
         input_size=config["input_size"],
         model_repo_path=config["model_repo_path"],

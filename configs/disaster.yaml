@@ -38,8 +38,8 @@ exclude_classes: []
 
 # High-level model/control
 model_name: DINO
-method: multilayer           # {linear|multilayer}
-encoder_adapters: lora        # {none|lora|svf}
+method: multilayer           # Multilayer decoder (only supported option)
+encoder_adapters: none        # {none|lora|svf}
 input_size: 512
 number_of_shots: 20         # K for IFA support set selection
 
@@ -48,19 +48,19 @@ use_ifa_train: true
 ifa_iters: 3
 ifa_refine: true
 ifa_alpha: 0.3
-ifa_ms_weights: [0, 0, 0.4, 0.6]
+ifa_ms_weights: [0.1, 0.2, 0.3, 0.4]
 ifa_temp: 10.0
 ifa_fg_thresh: 0.7
 ifa_bg_thresh: 0.6
 ifa_use_fdm: true
 ifa_loss_w_main: 0.3
 ifa_loss_w_aux: 0.0
-ifa_train_support_k: 20      # Use <= number_of_shots supports each iter to save memory
+ifa_train_support_k: 10      # Use <= number_of_shots supports each iter to save memory
 ifa_detach_support: true     # Detach support features to reduce graph size
 
 #dataset
 dataset_name: disaster
-split_file: datasets/disaster_5shot_splits.json
+split_file: datasets/disaster_2shot_splits.json
 batch_size: 1 # For few-shot, batch size is often 1
 train_min_size: 512
 train_max_size: 512
@@ -84,4 +84,3 @@ model_path : ./pretrain         # Directory containing pre-trained backbone weig
 model_repo_path : ./exp/        # Directory containing local backbone repos (e.g., dinov2)
 # Path to the pretrained linear decoder weights, used for methods like 'svf'
 # If left empty or null, the framework will default to the current behavior.
-# linear_weights_path: ./exp/models_disaster/DINO_linear_disaster_100shot_run1_best.pth # Example: './exp/models_disaster/DINO_linear_disaster_10shot_run1_best.pth'

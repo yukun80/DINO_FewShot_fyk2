@@ -7,13 +7,9 @@ It has been refactored to use Sacred for robust experiment tracking and manageme
 2.  **Run Training with Sacred:**
     The syntax is `python3 train.py with <key>=<value>`.
 
-    - **Linear Probing (10-shot, LR=0.01, Run 1):**
-      python3 train.py with method=linear nb_shots=10 dino_version=2 dinov2_size=base run_id=1
-      python3 train.py with method=linear nb_shots=10 dino_version=3 dinov3_size=base run_id=1
-
-    - **multilayer**
-      python3 train.py with method=multilayer nb_shots=9 dino_version=2 dinov2_size=base run_id=1
-      python3 train.py with method=multilayer nb_shots=45 dino_version=2 dinov2_size=base run_id=1
+    - **Multilayer decoder (default)**
+      python3 train.py with dataset=disaster nb_shots=20 dino_version=3 dinov3_size=base run_id=1
+      python3 train.py with dataset=disaster nb_shots=10 dino_version=2 dinov2_size=base run_id=1
       
       
     - **IFA**
@@ -22,7 +18,7 @@ It has been refactored to use Sacred for robust experiment tracking and manageme
 """
 
 # --- Example Command ---
-# python3 train.py with method=linear nb_shots=10 lr=0.01 run_id=1
+# python3 train.py with dataset=disaster nb_shots=20 run_id=1
 # -----------------------
 
 import datetime
@@ -38,7 +34,7 @@ from sacred.observers import FileStorageObserver
 # --- Project-specific Imports ---
 from utils.train_utils import get_lr_function, get_loss_fun, get_optimizer, get_dataset_loaders
 from utils.precise_bn import compute_precise_bn_stats
-from models.backbones.dino import DINO_linear
+from models.backbones.dino import DINOMultilayer
 from utils.ifa import extract_encoder_features, run_ifa_training_logits
 import warnings
 
@@ -62,7 +58,10 @@ def cfg():
 
     # --- Command-line accessible parameters (now default to YAML values when present) ---
     model_name = config.get("model_name", "DINO")
-    method = config.get("method", "linear")
+    legacy_method = config.get("method", "multilayer")
+    if legacy_method not in (None, "multilayer"):
+        raise ValueError(f"Only 'multilayer' method is supported, but the config requested '{legacy_method}'.")
+    method = "multilayer"
     dataset = config.get("dataset", "disaster")
     nb_shots = config.get("number_of_shots", 10)
     lr = config.get("lr", 0.01)
@@ -228,7 +227,7 @@ def train_one_epoch(
         loss = loss_fun(output, target.long())
 
         # Optional IFA training branch (parallel to decoder CE)
-        if config.get("use_ifa_train", False) and config["method"] in ("linear", "multilayer"):
+        if config.get("use_ifa_train", False):
             k = int(config.get("number_of_shots", 1))
             k_eff = int(config.get("ifa_train_support_k", k) or k)
             k_eff = max(1, min(k, k_eff))
@@ -264,7 +263,6 @@ def train_one_epoch(
                 logits_ifa = run_ifa_training_logits(
                     model=model,
                     image=image,
-                    method=config["method"],
                     version=config.get("dino_version", 2),
                     input_size=config.get("input_size", 512),
                     ifa_cfg=config,
@@ -355,9 +353,8 @@ def main(_run, config):
 
     # --- Model Initialization ---
     if config["model_name"] == "DINO":
-        model = DINO_linear(
+        model = DINOMultilayer(
             version=config.get("dino_version", 2),
-            method=config["method"],
             num_classes=config["num_classes"],
             input_size=config["input_size"],
             model_repo_path=config["model_repo_path"],
@@ -389,26 +386,6 @@ def main(_run, config):
         raise NotImplementedError(f"Model '{config['model_name']}' is not supported.")
 
     print_trainable_parameters(model)
-
-    # --- Load Pre-trained Decoder if Applicable ---
-    if config["method"] in ["svf", "lora"]:
-        linear_weights_path = (
-            config.get("linear_weights_path")
-            or f"./exp/models_disaster/{config['model_name']}_linear_{config['dataset']}_{config['number_of_shots']}shot_run{config['run']}_best.pth"
-        )
-
-        print(f"Attempting to load pre-trained decoder from: {linear_weights_path}")
-        if not os.path.exists(linear_weights_path):
-            raise FileNotFoundError(
-                f"Pre-trained decoder not found at {linear_weights_path}. Please run the 'linear' method first."
-            )
-
-        state_dict = torch.load(linear_weights_path, map_location="cpu")
-        model.decoder.load_state_dict(
-            {k.replace("decoder.", ""): v for k, v in state_dict.items() if k.startswith("decoder.")}
-        )
-        model.bn.load_state_dict({k.replace("bn.", ""): v for k, v in state_dict.items() if k.startswith("bn.")})
-        print("Successfully loaded pre-trained decoder and batch norm layers.")
 
     model.to(device)
 

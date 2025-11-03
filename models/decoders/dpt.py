@@ -10,7 +10,8 @@ class DPTDecoder(nn.Module):
 
     - Takes 4 intermediate feature maps from the ViT backbone (same spatial size):
       feats: Sequence[Tensor] of length 4, each [B, C, H, W]
-    - For each layer: 1x1 projection to configured out_channels[i], then 3x3 conv to `features`.
+    - For each layer: 1x1 projection to configured out_channels[i], then 3x3 conv to `features`,
+      followed by GELU+Dropout.
     - Upsamples to the first layer's spatial size (for robustness), concatenates, and outputs logits via 1x1 conv.
     """
 
@@ -21,6 +22,7 @@ class DPTDecoder(nn.Module):
         features: int = 128,
         out_channels: Optional[Sequence[int]] = None,
         use_bn: bool = False,
+        dropout: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -50,6 +52,7 @@ class DPTDecoder(nn.Module):
         if use_bn:
             self.refine_bn = nn.ModuleList([nn.BatchNorm2d(features) for _ in range(4)])
 
+        self.dropout = nn.Dropout(p=float(dropout))
         self.act = nn.GELU()
 
         # Final fusion and classification
@@ -65,6 +68,7 @@ class DPTDecoder(nn.Module):
             if self.use_bn:
                 x = self.refine_bn[i](x)
             x = self.act(x)
+            x = self.dropout(x)
             proc.append(x)
 
         target_hw = proc[0].shape[-2:]

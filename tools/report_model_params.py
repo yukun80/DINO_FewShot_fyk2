@@ -46,7 +46,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from models.backbones.dino import DINO_linear
+from models.backbones.dino import DINOMultilayer
 
 """
 python3 -m tools.report_model_params --override model_repo_path=. model_path=../pretrain dinov3_weights_path=../pretrain/dinov3_vits16_pretrain_lvd1689m-08c60483.pth dinov3_size=small
@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         default=None,
         metavar="KEY=VALUE",
-        help="Override configuration keys, e.g. method=linear fdm.enable_acpa=false",
+        help="Override configuration keys, e.g. encoder_adapters=lora fdm.enable_acpa=false",
     )
     parser.add_argument(
         "--device",
@@ -126,10 +126,12 @@ def load_config(path: str, overrides: Iterable[str] | None) -> Dict[str, Any]:
     return cfg
 
 
-def build_model(cfg: Dict[str, Any]) -> DINO_linear:
+def build_model(cfg: Dict[str, Any]) -> DINOMultilayer:
+    legacy_method = cfg.get("method", "multilayer")
+    if legacy_method not in (None, "multilayer"):
+        raise ValueError(f"Only 'multilayer' method is supported, but the config requested '{legacy_method}'.")
     model_kwargs = dict(
         version=cfg.get("dino_version", 2),
-        method=cfg.get("method", "linear"),
         num_classes=cfg.get("num_classes", 2),
         input_size=cfg.get("input_size", 512),
         model_repo_path=cfg.get("model_repo_path"),
@@ -147,11 +149,11 @@ def build_model(cfg: Dict[str, Any]) -> DINO_linear:
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"Configuration must provide {joined} for model initialisation.")
-    model = DINO_linear(**model_kwargs)
+    model = DINOMultilayer(**model_kwargs)
     return model
 
 
-def run_dummy_forward(model: DINO_linear, device: torch.device, cfg: Dict[str, Any]) -> None:
+def run_dummy_forward(model: DINOMultilayer, device: torch.device, cfg: Dict[str, Any]) -> None:
     input_size = cfg.get("input_size", 512)
     if isinstance(input_size, (list, tuple)):
         h, w = input_size

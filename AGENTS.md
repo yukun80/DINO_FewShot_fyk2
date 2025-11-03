@@ -22,12 +22,12 @@
 - Train（YAML 驱动的最简命令）:
   - `python3 train.py with run_id=1`
 - Train（需要时从 CLI 覆盖关键项）:
-  - `python3 train.py with method=multilayer encoder_adapters=lora use_ifa_train=True ifa_alpha=0.3 run_id=1`
+  - `python3 train.py with encoder_adapters=lora use_ifa_train=True ifa_alpha=0.3 run_id=1`
 - Evaluate (requires checkpoint):
   - `python3 eval.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=10`
 - Predict (save masks as artifacts):
   - `python3 predict.py with checkpoint_path='experiments/FSS_Training/1/best_model.pth' nb_shots=10`
-- Supported `method` values: `linear`, `multilayer`, `svf`, `lora` (VPT removed).
+- Supported `method` value: `multilayer` (legacy aliases now route through `encoder_adapters`).
 
 ## Frequency Decoupling Modules (FDM)
 - Purpose: Optional target-domain finetuning adapters that operate in frequency/phase space to reduce inter-channel correlation and improve cross-domain robustness.
@@ -37,11 +37,10 @@
   - `apm_mode: {"S"|"M"}` — "S" uses `[1,1,H,W]` masks; "M" uses `[1,C,H,W]` masks.
   - `enable_acpa: {true|false}`
 - Fixed integration policy (no extra knobs):
-  - `linear` and `svf`: apply APM → ACPA on the final feature map, then BN + 1×1.
-  - `multilayer`: apply APM → ACPA on only the deeper two of the four intermediate features; pass all four into DPT.
+  - Multilayer decoder: apply APM → ACPA on only the deeper two of the four intermediate features; pass all four into DPT.
 - Implementation notes:
   - Batch‑agnostic APM parameters: masks are initialized lazily to `[1,1,H,W]` or `[1,C,H,W]` at first use.
-  - Shapes are preserved; decoders (linear/DPT) require no changes.
+  - Shapes are preserved; the DPT decoder consumes four spatially aligned features.
   - Code points: see `models/backbones/dino.py` around the decoder paths.
 
 ## IFA Integration（Training + Inference）
@@ -54,11 +53,10 @@
 - Multi‑iteration + refine:
   - `ifa_iters` controls the number of BFP iterations (default 3).
   - `ifa_refine=True` enables an extra refine step in the first iteration (as in the original IFA).
-- Linear vs. Multilayer:
-  - `linear`: IFA runs on the last encoder feature and its logits are upsampled and fused.
-  - `multilayer`: IFA runs on the four spread layers; per‑scale logits are upsampled and fused via `ifa_ms_weights` (default `[0.1,0.2,0.3,0.4]`, deeper layers higher weight).
+- Multilayer decoder:
+  - IFA runs on the four spread layers; per-scale logits are upsampled and fused via `ifa_ms_weights` (default `[0.1,0.2,0.3,0.4]`, deeper layers higher weight).
 - FDM parity on features:
-  - Set `ifa_use_fdm=True` (default) to apply APM→ACPA to the encoder features used by IFA, with the same policy as training: deeper‑two for `multilayer`, last‑only for `linear`.
+  - Set `ifa_use_fdm=True` (default) to apply APM→ACPA to the encoder features used by IFA, mirroring the deeper-two policy from training.
   - FDM is applied only if the model actually has APM/ACPA enabled; otherwise it is skipped.
 - Logit fusion with the trained decoder output:
   - Final logits = `(1‑ifa_alpha) * base_logits + ifa_alpha * ifa_logits` (default `ifa_alpha=0.3`).
@@ -84,7 +82,7 @@ Notes on methods
   - Applies to both DINOv2 and DINOv3 backbones；是否 no_grad 由 `encoder_adapters` 决定：`none`→冻结（no_grad），`lora/svf`→可微（仅训练轻量适配层）。
 
 ## Encoder Adapters（解耦）
-- `encoder_adapters: {none|lora|svf}` 与解码器类型（`method: linear|multilayer`）解耦。
+- `encoder_adapters: {none|lora|svf}` 与解码器类型解耦。
 - 选择 `lora/svf` 时在 encoder 注入轻量适配器、允许可微前向；选择 `none` 则保持冻结、节省显存。
 
 ## DINOv3 Adaptation
@@ -148,7 +146,7 @@ Training Stability Tips
 ## Security & Configuration Tips
 - Verify paths in `configs/disaster.yaml` (`dataset_dir`, `model_path`, `model_repo_path`) exist locally.
 - Do not commit private data or large weights; `.gitignore` already excludes experiment dirs.
-- Some methods (`svf`, `lora`) require a prior linear decoder; ensure `linear_weights_path` is set.
+- `svf`/`lora` adapters operate on top of the multilayer decoder; a standalone linear checkpoint is no longer required.
 - `model_path` (pretrained weights dir) and `model_repo_path` (local backbone repo) are required for model init.
 - For DINOv3, if auto-discovery fails, specify `dinov3_weights_path` explicitly.
 - For DINOv3, you may also set `dinov3_rope_dtype` (default `bf16`) to `{bf16, fp32, fp16}`.
